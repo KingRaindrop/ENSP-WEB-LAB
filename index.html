@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>eNSP Web Lab</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">eS</span>
+          <div>
+            <strong>eNSP Web Lab</strong>
+            <div class="project-line">
+              <span id="projectName">EnterpriseCampus.lab</span>
+              <span id="currentIpBadge" class="current-ip">IP ADDRESS: Detecting...</span>
+            </div>
+          </div>
+        </div>
+        <nav class="toolbar" aria-label="主工具栏">
+          <button id="selectTool" class="tool active" title="选择">↖</button>
+          <button id="linkTool" class="tool link-tool-strong" title="连接链路">⛓</button>
+          <button id="textTool" class="tool" title="文本标注">T</button>
+          <button id="deleteTool" class="tool danger" title="删除">⌫</button>
+          <button id="toggleLeftPanel" class="tool" title="收起/展开左侧设备栏">◧</button>
+          <button id="toggleRightPanel" class="tool" title="收起/展开右侧属性栏">◨</button>
+          <span class="divider"></span>
+          <button id="startBtn" class="action">启动</button>
+          <button id="pauseBtn" class="action">暂停</button>
+          <button id="resetBtn" class="action">重置</button>
+          <span class="divider"></span>
+          <button id="saveBtn" class="action primary-action" title="保存项目">保存</button>
+          <button id="exportBtn" class="action strong-action" title="下载/导出">下载</button>
+          <button id="exportEnsPBtn" class="action strong-action" title="导出为 eNSP 工程文件夹">导出工程</button>
+          <button id="importFolderBtn" class="action strong-action" title="导入 eNSP 工程文件夹或 ZIP 工程包">导入工程</button>
+          <span id="autoSaveBadge" class="autosave-badge">Auto-Save</span>
+          <input id="importFile" type="file" accept="application/json,.json,.txt,.csv,.topo,.xml,.zip" hidden />
+          <input id="importFolder" type="file" webkitdirectory directory multiple hidden />
+        </nav>
+        <div class="sim-state">
+          <span id="clock">00:00:00</span>
+          <span id="stateBadge">Stopped</span>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="sidebar left-panel">
+          <section class="panel-block">
+            <div class="panel-head">
+              <h2>设备</h2>
+              <input id="deviceSearch" type="search" placeholder="搜索型号" />
+            </div>
+            <div id="deviceCategories" class="category-tabs"></div>
+            <div id="devicePalette" class="palette"></div>
+          </section>
+          <section class="panel-block">
+            <div class="panel-head">
+              <h2>拓扑模板</h2>
+            </div>
+            <div class="template-grid">
+              <button data-template="campus">园区网</button>
+              <button data-template="datacenter">数据中心</button>
+              <button data-template="wlan">WLAN</button>
+              <button data-template="empty">空白</button>
+            </div>
+          </section>
+          <section class="panel-block">
+            <div class="panel-head">
+              <h2>实验模板</h2>
+              <span id="labProgress">0套</span>
+            </div>
+            <div id="labList" class="lab-list"></div>
+          </section>
+        </aside>
+
+        <section class="canvas-region">
+          <div class="canvas-head">
+            <div class="crumbs">
+              <span>Topology</span>
+              <strong id="selectionLabel">未选择</strong>
+            </div>
+            <div class="zoom-controls">
+              <button id="zoomOut" title="缩小 (Ctrl+-)">−</button>
+              <span id="zoomLabel">100%</span>
+              <button id="zoomIn" title="放大 (Ctrl+=)">+</button>
+              <button id="fitBtn" title="适配画布 (Ctrl+0)">□</button>
+            </div>
+          </div>
+          <div id="stageViewport" class="stage-viewport">
+            <div id="stage" class="stage">
+              <svg id="linkLayer" class="link-layer" aria-hidden="true"></svg>
+              <div id="deviceLayer" class="device-layer"></div>
+              <div id="annotationLayer" class="annotation-layer"></div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="sidebar right-panel">
+          <section class="panel-block inspector">
+            <div class="panel-head">
+              <h2>属性</h2>
+              <span id="objectType">Topology</span>
+            </div>
+            <div id="inspectorBody" class="inspector-body"></div>
+          </section>
+          <section id="ipAddressPanel" class="panel-block ip-address-panel">
+            <div class="panel-head">
+              <h2>IP ADDRESS</h2>
+            </div>
+            <div id="ipAddressList" class="ip-list"></div>
+          </section>
+          <section class="panel-block">
+            <div class="panel-head">
+              <h2>资源</h2>
+            </div>
+            <div class="meters">
+              <label>CPU <meter id="cpuMeter" max="100" value="0"></meter><span id="cpuText">0%</span></label>
+              <label>内存 <meter id="memMeter" max="100" value="0"></meter><span id="memText">0%</span></label>
+              <label>链路 <meter id="linkMeter" max="100" value="0"></meter><span id="linkText">0%</span></label>
+            </div>
+          </section>
+          <section class="panel-block">
+            <div class="panel-head">
+              <h2>协议</h2>
+            </div>
+            <div id="protocolBadges" class="badges"></div>
+          </section>
+        </aside>
+      </main>
+
+      <section class="bottom-console">
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-tab="cli">CLI</button>
+          <button class="tab" data-tab="config">配置</button>
+          <button class="tab" data-tab="packets">报文</button>
+          <button class="tab" data-tab="events">事件</button>
+          <button id="toggleBottomPanel" class="tab utility-tab" title="收起/展开底部面板">收起</button>
+        </div>
+        <div class="console-grid">
+          <div id="cliTab" class="tab-panel active">
+            <div id="terminal" class="terminal"></div>
+            <form id="cliForm" class="cli-form">
+              <span id="prompt">&lt;Lab&gt;</span>
+              <input id="cliInput" autocomplete="off" spellcheck="false" />
+            </form>
+          </div>
+          <div id="configTab" class="tab-panel">
+            <textarea id="configEditor" spellcheck="false"></textarea>
+            <div class="config-actions">
+              <button id="applyConfig">应用配置</button>
+              <button id="copyConfig">复制</button>
+              <button id="downloadConfig">下载</button>
+            </div>
+          </div>
+          <div id="packetsTab" class="tab-panel">
+            <table>
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>源</th>
+                  <th>目的</th>
+                  <th>协议</th>
+                  <th>路径</th>
+                  <th>结果</th>
+                </tr>
+              </thead>
+              <tbody id="packetRows"></tbody>
+            </table>
+          </div>
+          <div id="eventsTab" class="tab-panel">
+            <div id="eventLog" class="event-log"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,10 @@
+# eNSP Web Lab text topology import sample
+device,AR1,router,120,220,10.0.0.1/24
+device,Core_SW,l3switch,360,220
+device,Access_SW,switch,600,220
+device,PC1,pc,840,140,192.168.10.10/24
+device,Server1,server,840,320,10.10.100.10/24
+link,AR1,Core_SW,GE0/0/0,GE1/0/1,Ethernet
+link,Core_SW,Access_SW,GE1/0/2,GE0/0/1,Fiber
+link,Access_SW,PC1,GE0/0/2,Ethernet0/0/1,Ethernet
+link,Core_SW,Server1,GE1/0/3,Ethernet0/0/1,Ethernet
