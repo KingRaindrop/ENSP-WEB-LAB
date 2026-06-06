@@ -1,5 +1,7 @@
 # eNSP Web Lab
 
+体验网址：https://ensp.resky.us.ci/
+
 一个纯前端的 eNSP 风格网络实验平台。项目不依赖后端服务，直接用浏览器打开 `index.html` 即可运行，适合网络课程教学、拓扑预览、eNSP 工程导入、基础协议实验和命令行演示。
 
 ## 快速开始
@@ -7,7 +9,7 @@
 直接打开：
 
 ```text
-.\ENSP\index.html
+C:\Users\wax66\Desktop\ENSP\index.html
 ```
 
 如果浏览器对本地文件访问限制较多，可以在项目目录启动静态服务：
