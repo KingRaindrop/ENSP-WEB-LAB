@@ -552,6 +552,11 @@ button:active {
   stroke-dasharray: 8 7;
 }
 
+.link.blocked {
+  stroke: #f59e0b;
+  stroke-dasharray: 10 6;
+}
+
 .link.pending {
   stroke: var(--brand);
   stroke-dasharray: 7 5;
@@ -831,6 +836,24 @@ button:active {
   color: var(--muted);
 }
 
+.kv strong {
+  min-width: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.state-ok {
+  color: var(--ok);
+}
+
+.state-warn {
+  color: #b45309;
+}
+
+.state-bad {
+  color: var(--bad);
+}
+
 .port-list {
   display: grid;
   gap: 6px;
@@ -853,6 +876,96 @@ button:active {
 .port-row button {
   height: 26px;
   border-radius: 6px;
+}
+
+.link-port-row {
+  grid-template-columns: 24px minmax(0, 1fr) 42px;
+}
+
+.health-list {
+  display: grid;
+  gap: 6px;
+}
+
+.collapsed-cards {
+  display: grid;
+  gap: 6px;
+}
+
+.collapsed-cards summary {
+  min-height: 30px;
+  padding: 7px 9px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  color: var(--muted);
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.collapsed-cards summary:hover {
+  color: var(--ink);
+  border-color: #a7b5c7;
+  background: #f8fafc;
+}
+
+.collapsed-card-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.health-item {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 6px 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 12px;
+}
+
+.health-item span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.health-item strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.health-item small {
+  grid-column: 2 / -1;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.health-item button {
+  height: 26px;
+  border-radius: 6px;
+}
+
+.health-item.ok {
+  border-left-color: var(--ok);
+}
+
+.health-item.info {
+  border-left-color: var(--brand);
+}
+
+.health-item.warn {
+  border-left-color: #f59e0b;
+}
+
+.health-item.bad {
+  border-left-color: var(--bad);
 }
 
 .meters {
@@ -883,6 +996,19 @@ meter {
 .ip-list {
   display: grid;
   gap: 7px;
+}
+
+.health-section {
+  display: grid;
+  gap: 7px;
+  margin-top: 6px;
+}
+
+.subsection-label {
+  color: var(--brand);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .ip-address-panel {
@@ -1119,6 +1245,14 @@ th {
   top: 0;
   background: #111821;
   color: #a9b6c8;
+}
+
+#packetRows tr {
+  cursor: pointer;
+}
+
+#packetRows tr:hover {
+  background: rgba(59, 130, 246, 0.12);
 }
 
 .event-log {

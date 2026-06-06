@@ -7,7 +7,7 @@
 直接打开：
 
 ```text
-.\ENSP\index.html
+C:\Users\wax66\Desktop\ENSP\index.html
 ```
 
 如果浏览器对本地文件访问限制较多，可以在项目目录启动静态服务：
@@ -51,7 +51,7 @@ http://localhost:8000
 - 支持导出/导入 JSON 项目文件。
 - 支持导出 eNSP 风格工程文件夹：`项目名.topo`、GUID 设备目录、每台终端的 `PC.xml`、每台网络设备的 `vrpcfg.zip/vrpcfg.cfg`；`.topo` 按 eNSP 常见的 `<devices>/<lines>/<txttips>` 结构生成。
 - 支持通用 JSON、CSV、文本边列表、简化 Mermaid/Graphviz 风格拓扑。
-- 支持导入教程/操作记录式 VRP 文本，例如包含 `<Huawei>`、`[AR4] interface ...`、`[AR4-acl-adv-3000] rule ...` 的 TXT，会按设备提示符分组并应用配置。
+- 支持导入教程/操作记录式 VRP 文本，例如包含 `<Huawei>`、`[AR4] interface ...`、`[AR4-acl-adv-3000] rule ...` 的 TXT，会按设备提示符分组并应用配置，也会尽量提取 Client/Server 的 IP、掩码、网关、DNS 和域名映射。
 - 支持 eNSP 工程文件夹导入，读取 `.topo`、`PC.xml`、`vrpcfg.zip/vrpcfg.cfg`。
 - 支持 eNSP ZIP 工程包导入，结构可类似：
 
@@ -163,6 +163,8 @@ ospf 1
 area 0
 network 192.168.1.0 0.0.0.255
 ip route-static 0.0.0.0 0.0.0.0 192.168.1.254
+undo ip route-static 0.0.0.0 0.0.0.0 192.168.1.254
+undo ip address
 ping PC1
 ```
 
@@ -225,10 +227,10 @@ clear
 - OSPF/RIP/ISIS/BGP 等已启用的同协议路由域会做基础动态可达性判断。
 - 静态路由的下一跳需要位于本设备某个直连接口网段，否则不会被认为有效。
 - Console 线只表示管理连接，不参与 Ping、HTTP、FTP 转发路径。
-- Access/Trunk 端口会做基础 VLAN 兼容判断，VLAN 不匹配时业务不可达。
+- Access/Trunk 端口会做基础 VLAN 兼容判断，支持 `allow-pass vlan all`、`10 to 20` 范围和单臂路由子接口 `dot1q termination vid`。
 - DNS 解析会先检查 Client 到 DNS Server 的可达性，路由或 ACL 阻断时不会返回记录。
 - Ping 会同时检查正向 `icmp echo` 和返回方向 `icmp echo-reply` 的 ACL。
-- HTTP/FTP 会按 TCP 目的端口匹配 ACL，例如 80、21、20。
+- HTTP/FTP 会按 TCP 目的端口匹配 ACL；FTP 会分别检查 21 控制连接和 20 数据连接。
 
 ## 数据持久化
 

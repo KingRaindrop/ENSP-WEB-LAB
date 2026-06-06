@@ -121,6 +121,49 @@ let suppressNodeClick = false;
 let suppressAnnotationClick = false;
 let flashingLinks = new Set();
 
+// 链路邻接索引：链路的端点(a/b)成员关系只在 push / 数组重建时变化，
+// 因此用 (数组引用 + 长度) 作为新鲜度签名即可自动失效，无需在每个变更点手动维护。
+let _adjacency = null;
+let _adjRef = null;
+let _adjLen = -1;
+
+function getAdjacency() {
+  if (_adjacency && _adjRef === state.links && _adjLen === state.links.length) return _adjacency;
+  const map = new Map();
+  state.links.forEach((link) => {
+    if (!map.has(link.a)) map.set(link.a, []);
+    if (!map.has(link.b)) map.set(link.b, []);
+    map.get(link.a).push(link);
+    map.get(link.b).push(link);
+  });
+  _adjacency = map;
+  _adjRef = state.links;
+  _adjLen = state.links.length;
+  return map;
+}
+
+function linksAt(nodeId) {
+  return getAdjacency().get(nodeId) || [];
+}
+
+function linksOf(nodeId, predicate = null) {
+  const links = linksAt(nodeId);
+  return predicate ? links.filter(predicate) : links;
+}
+
+function linkBetween(aId, bId, predicate = null) {
+  return linksAt(aId).find((link) => {
+    if (!((link.a === aId && link.b === bId) || (link.a === bId && link.b === aId))) return false;
+    return predicate ? predicate(link) : true;
+  }) || null;
+}
+
+function rebuildLinkIndex() {
+  _adjacency = null;
+  _adjRef = null;
+  _adjLen = -1;
+}
+
 function init() {
   bindToolbar();
   loadUiState();
@@ -360,10 +403,12 @@ function renderLinks() {
     const y1 = a.y + 37;
     const x2 = b.x + 48;
     const y2 = b.y + 37;
-    const effectiveStatus = linkEffectiveStatus(link);
+    const diagnostic = linkDiagnostic(link);
+    const effectiveStatus = diagnostic.physical;
     const tooltip = `${a.name} ${link.aPort || "Auto"} <-> ${b.name} ${link.bPort || "Auto"}
 Cable: ${link.cable || "Auto"}, ${link.bandwidth}M, ${link.latency}ms, loss ${link.loss || 0}%
-Status: ${effectiveStatus}`;
+Physical: ${diagnostic.physical}
+Traffic: ${diagnostic.traffic}${diagnostic.reason ? ` - ${diagnostic.reason}` : ""}`;
     const hit = document.createElementNS("http://www.w3.org/2000/svg", "line");
     hit.setAttribute("x1", x1);
     hit.setAttribute("y1", y1);
@@ -382,7 +427,8 @@ Status: ${effectiveStatus}`;
     line.setAttribute("x2", x2);
     line.setAttribute("y2", y2);
     const selected = isSelected("link", link.id);
-    line.setAttribute("class", `link ${effectiveStatus} ${flashingLinks.has(link.id) ? "flash" : ""} ${selected ? "selected" : ""}`);
+    const trafficBlocked = diagnostic.physical === "up" && diagnostic.traffic === "blocked";
+    line.setAttribute("class", `link ${effectiveStatus} ${trafficBlocked ? "blocked" : ""} ${flashingLinks.has(link.id) ? "flash" : ""} ${selected ? "selected" : ""}`);
     line.addEventListener("click", (event) => {
       event.stopPropagation();
       handleLinkClick(link.id);
@@ -393,7 +439,7 @@ Status: ${effectiveStatus}`;
     label.setAttribute("x", (x1 + x2) / 2 + 8);
     label.setAttribute("y", (y1 + y2) / 2 - 8);
     label.setAttribute("class", "link-label");
-    label.textContent = `${link.cable || "Auto"} ${link.bandwidth}M ${link.latency}ms`;
+    label.textContent = `${link.cable || "Auto"} ${link.bandwidth}M ${link.latency}ms${trafficBlocked ? " blocked" : ""}`;
     label.addEventListener("click", (event) => {
       event.stopPropagation();
       handleLinkClick(link.id);
@@ -965,7 +1011,7 @@ function addLink(aId, bId, options = {}) {
   const a = getNode(aId);
   const b = getNode(bId);
   if (!a || !b) return;
-  if (state.links.some((l) => (l.a === aId && l.b === bId) || (l.a === bId && l.b === aId))) {
+  if (linkBetween(aId, bId)) {
     toast("这两台设备之间已经存在链路。");
     return;
   }
@@ -984,6 +1030,7 @@ function addLink(aId, bId, options = {}) {
     loss: options.loss || 0
   };
   state.links.push(link);
+  rebuildLinkIndex();
   state.selected = { kind: "link", id: link.id };
   log("ok", "LINK", `${a.name}:${aPort} <-> ${b.name}:${bPort}`);
   renderAll();
@@ -1014,7 +1061,10 @@ function openLinkDialog(aId, bId) {
         <div class="field"><label>线缆类型</label><select id="newLinkCable">${["Auto", "Copper", "Ethernet", "Fiber", "Serial", "Console"].map((c) => `<option>${c}</option>`).join("")}</select></div>
         <div class="field"><label>带宽 Mbps</label><input id="newLinkBandwidth" type="number" min="1" value="1000" /></div>
       </div>
-      <div class="field"><label>时延 ms</label><input id="newLinkLatency" type="number" min="0" value="1" /></div>
+      <div class="link-ends">
+        <div class="field"><label>时延 ms</label><input id="newLinkLatency" type="number" min="0" value="1" /></div>
+        <div class="field"><label>丢包 %</label><input id="newLinkLoss" type="number" min="0" max="100" value="0" /></div>
+      </div>
       <div class="button-row">
         <button id="confirmNewLink" class="primary-btn">连接</button>
         <button id="cancelNewLink">取消</button>
@@ -1035,7 +1085,8 @@ function openLinkDialog(aId, bId) {
       bPort: $("newLinkBPort").value,
       cable: $("newLinkCable").value,
       bandwidth: Number($("newLinkBandwidth").value) || 1000,
-      latency: Number($("newLinkLatency").value) || 1
+      latency: Number($("newLinkLatency").value) || 1,
+      loss: clamp(Number($("newLinkLoss").value) || 0, 0, 100)
     });
     dialog.remove();
   });
@@ -1052,7 +1103,7 @@ function portOptions(node, selected = "") {
 
 function usedPorts(nodeId) {
   const used = new Set();
-  state.links.forEach((link) => {
+  linksOf(nodeId).forEach((link) => {
     if (link.a === nodeId) used.add(link.aPort);
     if (link.b === nodeId) used.add(link.bPort);
   });
@@ -1354,7 +1405,7 @@ function runVrpWindowCommand(win, node, session, cmd) {
   cmd = expandCliCommand(cmd);
   const lower = cmd.toLowerCase();
   if (lower === "?" || lower === "help") {
-    appendVrpConsole(win, "display this | display acl [all|number] | display traffic-filter applied-record | reset acl counter [number] | display/dis current-configuration | system-view/sys | interface/int g0/0/0 | acl 3000 | rule permit/deny ip source <ip> <wc> destination <ip> <wc> | traffic-filter inbound acl 3000 | ip route-static/ip route <dest> <mask> <next-hop> | ping <name|ip> | quit/q");
+    appendVrpConsole(win, "display this | display acl [all|number] | display traffic-filter applied-record | reset acl counter [number] | display/dis current-configuration | system-view/sys | interface/int g0/0/0 | acl 3000 | rule permit/deny ip source <ip> <wc> destination <ip> <wc> | traffic-filter inbound acl 3000 | ip route-static/ip route <dest> <mask> <next-hop> | undo ip route-static ... | undo ip address | ping <name|ip> | quit/q");
     return;
   }
   if (lower === "clear") {
@@ -1423,6 +1474,8 @@ function runVrpWindowCommand(win, node, session, cmd) {
       appendVrpConsole(win, aclResult.error);
       return;
     }
+  } else if (applyUndoConfigCommand(node, { mode: session.mode, iface: session.iface }, cmd, lower)) {
+    // undo command handled
   } else if (lower.startsWith("sysname ")) {
     node.name = cmd.slice(8).trim() || node.name;
   } else if (lower.startsWith("interface ")) {
@@ -1607,9 +1660,10 @@ function displayInterfaceText(node, name) {
 }
 
 function parseVlanList(text) {
-  if (String(text).trim().toLowerCase() === "all") return ["all"];
+  if (String(text).trim().toLowerCase() === "all") return ["*"];
+  const normalized = String(text).replace(/(\d+)\s+to\s+(\d+)/gi, "$1-$2");
   const result = [];
-  String(text).split(/\s+/).forEach((part) => {
+  normalized.split(/\s+/).forEach((part) => {
     if (/^\d+-\d+$/.test(part)) {
       const [start, end] = part.split("-").map(Number);
       for (let value = start; value <= end; value++) result.push(String(value));
@@ -1747,7 +1801,7 @@ function displayAclText(node, aclId = "") {
   return ids.map((id) => {
     const acl = acls[id];
     if (!acl) return `ACL ${id} not found.`;
-    const rules = acl.rules.length ? acl.rules.sort((a, b) => a.seq - b.seq).map((rule) => ` ${formatAclRule(rule, true)}`) : [" <empty>"];
+    const rules = acl.rules.length ? [...acl.rules].sort((a, b) => a.seq - b.seq).map((rule) => ` ${formatAclRule(rule, true)}`) : [" <empty>"];
     return [`Advanced ACL ${id}`, ...rules].join("\n");
   }).join("\n#\n");
 }
@@ -1903,6 +1957,59 @@ function applyTutorialCommand(node, context, cmd, lower) {
   }
   if (lower.startsWith("mode ")) {
     node.modeCommand = cmd;
+    return true;
+  }
+  return false;
+}
+
+function applyUndoConfigCommand(node, context, cmd, lower) {
+  const iface = context.iface ? findInterfaceByName(node, context.iface) : null;
+  if (lower.startsWith("undo ip route-static ")) {
+    const [, , , dest, mask, nextHop] = cmd.split(/\s+/);
+    node.routes = (node.routes || []).filter((route) => !(route.dest === dest && route.mask === mask && (!nextHop || route.nextHop === nextHop)));
+    node.protocols.Static = Boolean(node.routes.length);
+    return true;
+  }
+  if (/^undo\s+vlan\s+\d+/.test(lower)) {
+    const vlan = cmd.split(/\s+/).pop();
+    node.vlans = (node.vlans || []).filter((item) => item !== vlan);
+    return true;
+  }
+  if (context.mode !== "interface" || !iface) return false;
+  if (lower === "undo ip address") {
+    iface.ip = "";
+    iface.mask = "";
+    return true;
+  }
+  if (lower === "undo port default vlan") {
+    iface.vlan = "1";
+    return true;
+  }
+  if (lower.startsWith("undo port trunk allow-pass vlan")) {
+    const remove = parseVlanList(cmd.replace(/^undo\s+port\s+trunk\s+allow-pass\s+vlan\s*/i, ""));
+    iface.trunkAllow = remove.length && !remove.includes("*")
+      ? (iface.trunkAllow || []).filter((vlan) => !remove.includes(String(vlan)))
+      : [];
+    return true;
+  }
+  if (lower === "undo port link-type") {
+    iface.linkType = "access";
+    return true;
+  }
+  if (lower === "undo dot1q termination vid") {
+    iface.dot1q = "";
+    return true;
+  }
+  if (lower === "undo arp broadcast enable") {
+    iface.arpBroadcast = false;
+    return true;
+  }
+  if (lower === "undo ospf enable") {
+    iface.ospf = null;
+    return true;
+  }
+  if (lower === "undo dhcp select global") {
+    iface.dhcpSelect = "";
     return true;
   }
   return false;
@@ -2308,9 +2415,16 @@ function runEndpointCommand(win, node, cmd) {
     const dest = targetInfo?.node;
     const services = dest ? ensureServerServices(dest) : null;
     if (!dest || dest.type !== "server") appendPcConsole(out, `ftp: unknown host ${target}`);
-    else if (!endpointReachable(node.id, dest.id, { protocol: "tcp", destinationPort: services.ftp.port || 21, destIp: targetInfo.ip })) appendPcConsole(out, `ftp: connect to ${target}: Network is unreachable`);
-    else if (!services.ftp.enabled) appendPcConsole(out, `ftp: connect to ${dest.name}: Connection refused`);
-    else appendPcConsole(out, `Connected to ${dest.name}.\n220 ${dest.name} FTP service ready\nUser: ${services.ftp.user}\n230 Login successful\nRemote directory: /${services.ftp.root}\n${formatFtpListing(services.ftp)}`);
+    else {
+      const control = endpointReachabilityStatus(node.id, dest.id, { protocol: "tcp", destinationPort: services.ftp.port || 21, destIp: targetInfo.ip, countAcl: true });
+      if (!control.ok) appendPcConsole(out, `ftp: connect to ${target}: Network is unreachable (${control.reason})`);
+      else if (!services.ftp.enabled) appendPcConsole(out, `ftp: connect to ${dest.name}: Connection refused`);
+      else {
+        const data = endpointReachabilityStatus(node.id, dest.id, { protocol: "tcp", destinationPort: 20, destIp: targetInfo.ip, countAcl: true });
+        if (!data.ok) appendPcConsole(out, `Connected to ${dest.name}.\n220 ${dest.name} FTP service ready\nUser: ${services.ftp.user}\n230 Login successful\n425 Can't open data connection. (${data.reason})`);
+        else appendPcConsole(out, `Connected to ${dest.name}.\n220 ${dest.name} FTP service ready\nUser: ${services.ftp.user}\n230 Login successful\nRemote directory: /${services.ftp.root}\n${formatFtpListing(services.ftp)}`);
+      }
+    }
   } else if (lower === "arp -a") {
     appendPcConsole(out, arpTable(node).join("\n") || "No ARP Entries Found.");
   } else if (lower === "route print") {
@@ -2325,7 +2439,8 @@ function simulateHttpRequest(sourceNode, target, port = 80, url = "/") {
   const dest = targetInfo?.node;
   const services = dest ? ensureServerServices(dest) : null;
   if (!dest || dest.type !== "server") return `HttpClient Error: could not resolve host ${target}.`;
-  if (!endpointReachable(sourceNode.id, dest.id, { protocol: "tcp", destinationPort: port || 80, destIp: targetInfo.ip })) return `HttpClient Error: ${target} network unreachable.`;
+  const reachable = endpointReachabilityStatus(sourceNode.id, dest.id, { protocol: "tcp", destinationPort: port || 80, destIp: targetInfo.ip, countAcl: true });
+  if (!reachable.ok) return `HttpClient Error: ${target} network unreachable. (${reachable.reason})`;
   if (!services.http.enabled) return `HttpClient Error: ${dest.name} HTTP service disabled.`;
   if (Number(services.http.port) !== Number(port)) return `HttpClient Error: ${dest.name} has no HTTP service on port ${port}.`;
   const file = findServerFile(services.http.files, url);
@@ -2424,14 +2539,54 @@ function resolveDnsName(host, sourceNode) {
 }
 
 function endpointReachable(sourceId, destId, flow = {}) {
-  const source = getNode(sourceId);
-  const dest = getNode(destId);
-  const path = findPath(sourceId, destId, flow);
-  const returnRouteOk = path.length ? routeAllowsPath([...path].reverse(), { sourceIp: flow.destIp, destIp: flow.sourceIp }) : false;
-  return Boolean(state.running && source?.running && dest?.running && path.length && returnRouteOk && !aclBlocksPath(source, dest, path, flow));
+  return endpointReachabilityStatus(sourceId, destId, flow).ok;
 }
 
-function aclBlocksPath(source, dest, path, flow = {}) {
+function endpointReachabilityStatus(sourceId, destId, flow = {}) {
+  const source = getNode(sourceId);
+  const dest = getNode(destId);
+  const normalizedFlow = normalizeFlowIps(source, dest, flow);
+  if (!state.running) return { ok: false, path: [], reason: "仿真未运行" };
+  if (!source?.running) return { ok: false, path: [], reason: "源设备未启动" };
+  if (!dest?.running) return { ok: false, path: [], reason: "目的设备未启动" };
+
+  const routedPath = findPath(sourceId, destId, normalizedFlow);
+  const trafficPath = routedPath.length ? routedPath : findTrafficPath(sourceId, destId);
+  if (!trafficPath.length) {
+    const physicalPath = findPhysicalPath(sourceId, destId);
+    const blocked = firstTrafficBlock(physicalPath);
+    return {
+      ok: false,
+      path: physicalPath,
+      reason: blocked?.reason || "没有可承载业务流量的链路路径"
+    };
+  }
+
+  const forwardRouteReason = routeFailureReason(trafficPath, normalizedFlow);
+  if (forwardRouteReason) return { ok: false, path: trafficPath, reason: forwardRouteReason };
+
+  const forwardBlocked = aclBlocksPath(source, dest, trafficPath, normalizedFlow, { count: Boolean(flow.countAcl) });
+  if (forwardBlocked) return { ok: false, path: trafficPath, reason: formatAclBlockReason(forwardBlocked) };
+
+  const returnPath = [...trafficPath].reverse();
+  const returnFlow = {
+    ...normalizedFlow,
+    sourceIp: normalizedFlow.destIp,
+    destIp: normalizedFlow.sourceIp,
+    sourcePort: normalizedFlow.destinationPort || normalizedFlow.sourcePort,
+    destinationPort: normalizedFlow.sourcePort || "",
+    icmpType: normalizedFlow.protocol === "icmp" ? "echo-reply" : normalizedFlow.icmpType
+  };
+  const returnRouteReason = routeFailureReason(returnPath, returnFlow);
+  if (returnRouteReason) return { ok: false, path: trafficPath, reason: `返回路径：${returnRouteReason}` };
+
+  const returnBlocked = aclBlocksPath(dest, source, returnPath, returnFlow, { count: Boolean(flow.countAcl) });
+  if (returnBlocked) return { ok: false, path: trafficPath, reason: `返回路径：${formatAclBlockReason(returnBlocked)}` };
+
+  return { ok: true, path: trafficPath, reason: "" };
+}
+
+function aclBlocksPath(source, dest, path, flow = {}, options = {}) {
   const sourceIp = flow.sourceIp || primaryIp(source);
   const destIp = flow.destIp || primaryIp(dest);
   if (!sourceIp || !destIp) return null;
@@ -2446,7 +2601,9 @@ function aclBlocksPath(source, dest, path, flow = {}) {
     for (const check of checks) {
       const aclId = check.iface?.trafficFilters?.[check.direction];
       if (!aclId) continue;
-      const decision = evaluateAcl(node, aclId, sourceIp, destIp, flow);
+      const matched = findAclMatch(node, aclId, sourceIp, destIp, flow);
+      if (options.count && matched) matched.matches = (Number(matched.matches) || 0) + 1;
+      const decision = matched?.action || "permit";
       if (decision === "deny") return { node, iface: check.iface, direction: check.direction, aclId };
     }
   }
@@ -2454,17 +2611,20 @@ function aclBlocksPath(source, dest, path, flow = {}) {
 }
 
 function interfaceToward(node, peerId) {
-  const link = state.links.find((item) => linkUsableForTraffic(item) && ((item.a === node.id && item.b === peerId) || (item.b === node.id && item.a === peerId)));
+  const link = linkBetween(node.id, peerId, linkUsableForTraffic);
   if (!link) return null;
   return findInterfaceByName(node, link.a === node.id ? link.aPort : link.bPort);
 }
 
 function evaluateAcl(node, aclId, sourceIp, destIp, flow = {}) {
-  const acl = ensureAclStore(node)[String(aclId)];
-  if (!acl) return "permit";
-  const matched = acl.rules.sort((a, b) => a.seq - b.seq).find((rule) => aclRuleMatches(rule, sourceIp, destIp, flow));
-  if (matched) matched.matches = (Number(matched.matches) || 0) + 1;
+  const matched = findAclMatch(node, aclId, sourceIp, destIp, flow);
   return matched?.action || "permit";
+}
+
+function findAclMatch(node, aclId, sourceIp, destIp, flow = {}) {
+  const acl = ensureAclStore(node)[String(aclId)];
+  if (!acl) return null;
+  return [...acl.rules].sort((a, b) => a.seq - b.seq).find((rule) => aclRuleMatches(rule, sourceIp, destIp, flow)) || null;
 }
 
 function aclRuleMatches(rule, sourceIp, destIp, flow = {}) {
@@ -2556,9 +2716,31 @@ function pcPingLines(packet, dest, target = "") {
     ? `${target} [${targetIp}]`
     : targetIp;
   const header = `Pinging ${targetLabel} with 32 bytes of data:`;
+  const probes = Array.isArray(packet.probes) ? packet.probes.slice(0, 4) : [];
+  if (probes.length) {
+    const ttl = Math.max(1, 128 - Math.max(0, String(packet.path || "").split(" -> ").filter(Boolean).length - 1));
+    const received = probes.filter((probe) => probe.ok).length;
+    const times = probes.filter((probe) => probe.ok).map((probe) => probe.time);
+    const loss = Math.round((1 - received / probes.length) * 100);
+    const timeText = (time) => time <= 1 ? "time<1ms" : `time=${time}ms`;
+    return [
+      header,
+      ...probes.map((probe) => probe.ok ? `Reply from ${targetIp}: bytes=32 ${timeText(probe.time)} TTL=${ttl}` : "Request timed out."),
+      "",
+      `Ping statistics for ${targetIp}:`,
+      `    Packets: Sent = ${probes.length}, Received = ${received}, Lost = ${probes.length - received} (${loss}% loss),`,
+      ...(times.length ? [
+        "Approximate round trip times in milli-seconds:",
+        `    Minimum = ${Math.min(...times)}ms, Maximum = ${Math.max(...times)}ms, Average = ${Math.round(times.reduce((a, b) => a + b, 0) / times.length)}ms`
+      ] : [])
+    ];
+  }
   if (packet.result !== "Success") {
     const generalFailure = /仿真未运行|源设备未启动/.test(packet.reason || "");
-    const line = generalFailure ? "PING: transmit failed. General failure." : "Request timed out.";
+    const hostUnreachable = /缺少|没有可承载|没有可达|VLAN|Console|路由/.test(packet.reason || "");
+    const line = generalFailure
+      ? "PING: transmit failed. General failure."
+      : (hostUnreachable ? `Reply from ${packet.sourceIp || "0.0.0.0"}: Destination host unreachable.` : "Request timed out.");
     return [
       header,
       line,
@@ -2586,6 +2768,24 @@ function pcPingLines(packet, dest, target = "") {
 
 function formatVrpPing(packet, dest) {
   const targetIp = packet.destIp || dest.interfaces.find((iface) => iface.ip)?.ip || dest.name;
+  const probes = Array.isArray(packet.probes) ? packet.probes.slice(0, 5) : [];
+  if (probes.length) {
+    const received = probes.filter((probe) => probe.ok).length;
+    const times = probes.filter((probe) => probe.ok).map((probe) => probe.time);
+    const loss = ((1 - received / probes.length) * 100).toFixed(2);
+    return [
+      `PING ${targetIp}: 56  data bytes, press CTRL_C to break`,
+      ...probes.map((probe, index) => probe.ok
+        ? `    Reply from ${targetIp}: bytes=56 Sequence=${index + 1} ttl=254 time=${probe.time} ms`
+        : "    Request time out"),
+      "",
+      `--- ${targetIp} ping statistics ---`,
+      `    ${probes.length} packet(s) transmitted`,
+      `    ${received} packet(s) received`,
+      `    ${loss}% packet loss`,
+      ...(times.length ? [`    round-trip min/avg/max = ${Math.min(...times)}/${Math.round(times.reduce((a, b) => a + b, 0) / times.length)}/${Math.max(...times)} ms`] : [])
+    ].join("\n");
+  }
   if (packet.result !== "Success") {
     return [
       `PING ${targetIp}: 56  data bytes, press CTRL_C to break`,
@@ -2722,6 +2922,7 @@ function bulkDelete() {
   ids.forEach(closeNodeWindows);
   state.nodes = state.nodes.filter((node) => !ids.has(node.id));
   state.links = state.links.filter((link) => !ids.has(link.a) && !ids.has(link.b));
+  rebuildLinkIndex();
   state.annotations = state.annotations.filter((note) => !noteIds.has(note.id));
   log("warn", "BULK", `删除 ${ids.size} 台设备、${noteIds.size} 个文本标注`);
   state.multiSelected = [];
@@ -2763,6 +2964,120 @@ function topologyInspector() {
       <button id="clearPackets">清空报文</button>
       <button id="clearAll" class="danger-btn">清空拓扑</button>
     </div>`;
+}
+
+function topologyHealthItems() {
+  const items = [];
+  if (!state.nodes.length) {
+    return [{ level: "info", title: "空白拓扑", detail: "尚未放置设备", kind: "" }];
+  }
+
+  const ipMap = new Map();
+  state.nodes.forEach((node) => {
+    node.interfaces.forEach((iface) => {
+      if (!iface.ip) return;
+      const list = ipMap.get(iface.ip) || [];
+      list.push({ node, iface });
+      ipMap.set(iface.ip, list);
+    });
+  });
+  ipMap.forEach((list, ip) => {
+    if (list.length > 1) {
+      items.push({
+        level: "bad",
+        title: `重复 IP ${ip}`,
+        detail: list.map((item) => `${item.node.name}:${item.iface.name}`).join(" / "),
+        kind: "node",
+        id: list[0].node.id
+      });
+    }
+  });
+
+  const portUsage = new Map();
+  state.links.forEach((link) => {
+    [[link.a, link.aPort], [link.b, link.bPort]].forEach(([nodeId, port]) => {
+      if (!nodeId || !port) return;
+      const key = `${nodeId}::${normalizeInterfaceName(port)}`;
+      const list = portUsage.get(key) || [];
+      list.push(link);
+      portUsage.set(key, list);
+    });
+  });
+  portUsage.forEach((links, key) => {
+    if (links.length <= 1) return;
+    const [nodeId] = key.split("::");
+    const node = getNode(nodeId);
+    items.push({
+      level: "bad",
+      title: "端口重复连接",
+      detail: `${node?.name || nodeId} 的同一接口连接了 ${links.length} 条链路`,
+      kind: "node",
+      id: nodeId
+    });
+  });
+
+  state.links.forEach((link) => {
+    const diagnostic = linkDiagnostic(link);
+    if (diagnostic.physical === "up" && diagnostic.traffic === "up") return;
+    const a = getNode(link.a);
+    const b = getNode(link.b);
+    items.push({
+      level: diagnostic.physical === "down" ? "bad" : "warn",
+      title: `${a?.name || "?"} ↔ ${b?.name || "?"}`,
+      detail: diagnostic.reason || "链路不可用",
+      kind: "link",
+      id: link.id
+    });
+  });
+
+  state.nodes.filter((node) => !node.running).slice(0, 8).forEach((node) => {
+    items.push({
+      level: "warn",
+      title: `${node.name} 未启动`,
+      detail: "设备处于 Stopped 状态",
+      kind: "node",
+      id: node.id
+    });
+  });
+
+  state.nodes.filter((node) => ["pc", "client", "server"].includes(node.type)).forEach((node) => {
+    const iface = node.interfaces.find((item) => item.ip);
+    if (!iface || node.gateway || !state.links.some((link) => link.a === node.id || link.b === node.id)) return;
+    items.push({
+      level: "warn",
+      title: `${node.name} 缺少网关`,
+      detail: `${iface.ip} 访问跨网段业务时需要默认网关`,
+      kind: "node",
+      id: node.id
+    });
+  });
+
+  return items.length ? items.slice(0, 18) : [{ level: "ok", title: "未发现明显问题", detail: "拓扑基础状态正常", kind: "" }];
+}
+
+function healthRow(item) {
+  const action = item.kind === "node"
+    ? `<button data-health-node="${escapeHtml(item.id)}">定位</button>`
+    : item.kind === "link"
+      ? `<button data-health-link="${escapeHtml(item.id)}">定位</button>`
+      : "";
+  return `<div class="health-item ${escapeHtml(item.level)}">
+    <span>${escapeHtml(item.level.toUpperCase())}</span>
+    <strong>${escapeHtml(item.title)}</strong>
+    <small>${escapeHtml(item.detail || "")}</small>
+    ${action}
+  </div>`;
+}
+
+function collapsedCardsHtml(items, renderItem, labelForMore) {
+  if (!items.length) return "";
+  const [first, ...rest] = items;
+  if (!rest.length) return renderItem(first);
+  return `${renderItem(first)}
+    <details class="collapsed-cards">
+      <summary>${escapeHtml(labelForMore(rest.length))}</summary>
+      <div class="collapsed-card-list">${rest.map(renderItem).join("")}</div>
+    </details>`;
 }
 
 function bindTopologyInspector() {
@@ -2877,12 +3192,22 @@ function bindNodeInspector(node) {
 function linkInspector(link) {
   const a = getNode(link.a);
   const b = getNode(link.b);
+  const diagnostic = linkDiagnostic(link);
+  const aPort = a ? findExistingInterface(a, link.aPort) : null;
+  const bPort = b ? findExistingInterface(b, link.bPort) : null;
   return `
     <div class="kv">
       <div><span>端点 A</span><strong>${a?.name || "?"}:${link.aPort}</strong></div>
       <div><span>端点 B</span><strong>${b?.name || "?"}:${link.bPort}</strong></div>
-      <div><span>状态</span><strong>${link.status}</strong></div>
+      <div><span>管理状态</span><strong>${link.status}</strong></div>
+      <div><span>物理状态</span><strong class="${diagnostic.physical === "up" ? "state-ok" : "state-bad"}">${diagnostic.physical}</strong></div>
+      <div><span>业务状态</span><strong class="${diagnostic.traffic === "up" ? "state-ok" : "state-warn"}">${diagnostic.traffic}</strong></div>
+      <div><span>诊断</span><strong>${escapeHtml(diagnostic.reason || "-")}</strong></div>
     </div>
+    <div class="field"><label>端口状态</label><div class="port-list">
+      ${linkEndpointRow("A", a, aPort)}
+      ${linkEndpointRow("B", b, bPort)}
+    </div></div>
     <div class="field"><label>${a?.name || "端点 A"} 网口</label><select id="linkAPort">${a ? portOptions(a, link.aPort) : ""}</select></div>
     <div class="field"><label>${b?.name || "端点 B"} 网口</label><select id="linkBPort">${b ? portOptions(b, link.bPort) : ""}</select></div>
     <div class="field"><label>带宽 Mbps</label><input id="linkBandwidth" type="number" min="1" value="${link.bandwidth}" /></div>
@@ -2897,10 +3222,24 @@ function linkInspector(link) {
     </div>`;
 }
 
+function linkEndpointRow(label, node, iface) {
+  const ip = iface?.ip ? `${iface.ip}/${maskToPrefix(iface.mask || "24")}` : "未配置 IP";
+  const vlan = iface ? `VLAN ${formatAllowedVlans(iface, node)}` : "VLAN Auto";
+  const status = iface?.status === "down" ? "Down" : "Up";
+  return `<div class="port-row link-port-row">
+    <strong>${label}</strong>
+    <span>${escapeHtml(node?.name || "?")} ${escapeHtml(iface?.name || "-")} · ${escapeHtml(status)} · ${escapeHtml(ip)} · ${escapeHtml(vlan)}</span>
+    <button data-link-focus="${escapeHtml(node?.id || "")}" ${node ? "" : "disabled"}>定位</button>
+  </div>`;
+}
+
 function bindLinkInspector(link) {
   ["Bandwidth", "Latency", "Loss"].forEach((key) => {
     $(`link${key}`).addEventListener("change", (e) => {
-      link[key.toLowerCase()] = Number(e.target.value);
+      const value = Number(e.target.value);
+      link[key.toLowerCase()] = key === "Loss"
+        ? clamp(value || 0, 0, 100)
+        : (key === "Bandwidth" ? Math.max(1, value || 1) : Math.max(0, value || 0));
       renderAll();
     });
   });
@@ -2923,6 +3262,14 @@ function bindLinkInspector(link) {
     renderAll();
   });
   $("deleteLink").addEventListener("click", () => deleteLink(link.id));
+  document.querySelectorAll("[data-link-focus]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (!btn.dataset.linkFocus) return;
+      state.selected = { kind: "node", id: btn.dataset.linkFocus };
+      centerNode(btn.dataset.linkFocus);
+      renderAll();
+    });
+  });
 }
 
 function annotationInspector(note) {
@@ -2966,7 +3313,7 @@ function buildConfig(node) {
       p.ip ? ` ip address ${p.ip} ${p.mask || "24"}` : "",
       p.vlan ? ` port default vlan ${p.vlan}` : "",
       p.linkType ? ` port link-type ${p.linkType}` : "",
-      p.trunkAllow?.length ? ` port trunk allow-pass vlan ${p.trunkAllow.join(" ")}` : "",
+      p.trunkAllow?.length ? ` port trunk allow-pass vlan ${p.trunkAllow.map((vlan) => vlan === "*" ? "all" : vlan).join(" ")}` : "",
       p.dot1q ? ` dot1q termination vid ${p.dot1q}` : "",
       p.arpBroadcast ? " arp broadcast enable" : "",
       p.ospf ? ` ospf enable ${p.ospf.process} area ${p.ospf.area}` : "",
@@ -3073,6 +3420,7 @@ function parseConfig(node, text) {
       currentAcl = null;
       return;
     }
+    if (applyUndoConfigCommand(node, { mode: current ? "interface" : "", iface: current?.name || "" }, line, line.toLowerCase())) return;
     if (line.startsWith("sysname ")) node.name = line.slice(8).trim();
     if (line.startsWith("interface ")) {
       current = findInterfaceByName(node, line.slice(10).trim());
@@ -3141,6 +3489,7 @@ function parseConfig(node, text) {
       node.aaaEnabled = true;
       applyLocalUserCommand(node, line);
     }
+    if (applyServerConfigLine(node, line)) return;
     if (line.startsWith("authentication-mode ")) {
       const ui = node.userInterfaces[node.userInterfaces.length - 1] || getUserInterface(node, "vty 0 4");
       ui.authenticationMode = line.split(/\s+/).pop();
@@ -3151,6 +3500,63 @@ function parseConfig(node, text) {
       node.protocols.Static = true;
     }
   });
+}
+
+function applyServerConfigLine(node, line) {
+  if (node.type !== "server") return false;
+  const services = ensureServerServices(node);
+  const lower = line.toLowerCase();
+  if (lower.startsWith("http server enable")) {
+    services.http.enabled = true;
+    services.http.port = Number(line.match(/\bport\s+(\d+)/i)?.[1]) || services.http.port || 80;
+    services.http.root = line.match(/\broot\s+(.+)$/i)?.[1]?.trim() || services.http.root;
+    node.protocols.HTTP = true;
+    return true;
+  }
+  if (lower === "undo http server enable") {
+    services.http.enabled = false;
+    node.protocols.HTTP = false;
+    return true;
+  }
+  if (lower.startsWith("ftp server enable")) {
+    services.ftp.enabled = true;
+    services.ftp.port = Number(line.match(/\bport\s+(\d+)/i)?.[1]) || services.ftp.port || 21;
+    services.ftp.root = line.match(/\broot\s+(.+)$/i)?.[1]?.trim() || services.ftp.root;
+    node.protocols.FTP = true;
+    return true;
+  }
+  if (lower === "undo ftp server enable") {
+    services.ftp.enabled = false;
+    node.protocols.FTP = false;
+    return true;
+  }
+  if (lower.startsWith("ftp local-user ")) {
+    const parts = line.split(/\s+/);
+    services.ftp.user = parts[2] || services.ftp.user;
+    const passwordIndex = parts.findIndex((part) => part.toLowerCase() === "password");
+    if (passwordIndex >= 0) services.ftp.password = parts.slice(passwordIndex + 1).join(" ") || services.ftp.password;
+    return true;
+  }
+  if (lower === "dns server enable") {
+    services.dns.enabled = true;
+    node.protocols.DNS = true;
+    return true;
+  }
+  if (lower === "undo dns server enable") {
+    services.dns.enabled = false;
+    node.protocols.DNS = false;
+    return true;
+  }
+  if (lower.startsWith("dns static ")) {
+    const [, , host, ip] = line.split(/\s+/);
+    if (host && ip) {
+      services.dns.records[host.toLowerCase()] = ip;
+      services.dns.enabled = true;
+      node.protocols.DNS = true;
+    }
+    return true;
+  }
+  return false;
 }
 
 function normalizeConfigLine(line) {
@@ -3200,6 +3606,8 @@ function expandCliCommand(cmd) {
   if (/^vlan b\s+/.test(text.toLowerCase())) text = text.replace(/^vlan b\s+/i, "vlan batch ");
   if (/^ip route static\s+/.test(text.toLowerCase())) text = text.replace(/^ip route static\s+/i, "ip route-static ");
   if (/^ip route\s+/.test(text.toLowerCase())) text = text.replace(/^ip route\s+/i, "ip route-static ");
+  if (/^undo ip route static\s+/.test(text.toLowerCase())) text = text.replace(/^undo ip route static\s+/i, "undo ip route-static ");
+  if (/^undo ip route\s+/.test(text.toLowerCase())) text = text.replace(/^undo ip route\s+/i, "undo ip route-static ");
   if (/^interface\s+/.test(text.toLowerCase())) {
     const name = text.slice(text.indexOf(" ") + 1).trim();
     text = `interface ${expandInterfaceAlias(name)}`;
@@ -3231,7 +3639,7 @@ function runCommand(cmd) {
   cmd = expandCliCommand(cmd);
   const lower = cmd.toLowerCase();
   if (lower === "help" || lower === "?") {
-    addTerminal("display this | display acl [all|number] | display traffic-filter applied-record | reset acl counter [number] | display/dis current-configuration | display interface g0/0/0 | display topology | system-view/sys | interface/int g0/0/0 | acl 3000 | rule permit/deny ip source <ip> <wc> destination <ip> <wc> | traffic-filter inbound acl 3000 | ip route-static/ip route <dest> <mask> <next-hop> | ping <name|ip> | quit/q");
+    addTerminal("display this | display acl [all|number] | display traffic-filter applied-record | reset acl counter [number] | display/dis current-configuration | display interface g0/0/0 | display topology | system-view/sys | interface/int g0/0/0 | acl 3000 | rule permit/deny ip source <ip> <wc> destination <ip> <wc> | traffic-filter inbound acl 3000 | ip route-static/ip route <dest> <mask> <next-hop> | undo ip route-static ... | undo ip address | ping <name|ip> | quit/q");
     return;
   }
   if (lower === "clear") {
@@ -3348,6 +3756,8 @@ function configureCommand(cmd, lower, node) {
       updatePrompt();
       return;
     }
+  } else if (applyUndoConfigCommand(node, { mode: state.cliMode, iface: state.cliInterface }, cmd, lower)) {
+    // undo command handled
   } else if (lower.startsWith("sysname ")) {
     node.name = cmd.slice(8).trim() || node.name;
   } else if (lower.startsWith("interface ")) {
@@ -3484,36 +3894,66 @@ function runPing(sourceId, destId, options = {}) {
   const source = getNode(sourceId);
   const dest = getNode(destId);
   const flow = { protocol: "icmp", icmpType: "echo", ...options };
-  const path = findPath(sourceId, destId, flow);
-  const returnRouteOk = path.length ? routeAllowsPath([...path].reverse(), { sourceIp: flow.destIp, destIp: flow.sourceIp }) : false;
-  const forwardBlocked = source && dest && path.length ? aclBlocksPath(source, dest, path, flow) : null;
-  const returnBlocked = source && dest && path.length ? aclBlocksPath(dest, source, [...path].reverse(), { protocol: "icmp", icmpType: "echo-reply", sourceIp: flow.destIp, destIp: flow.sourceIp }) : null;
-  const aclBlocked = forwardBlocked || returnBlocked;
-  const up = state.running && source?.running && dest?.running && path.length > 0 && returnRouteOk && !aclBlocked;
-  const reason = up ? "" : (aclBlocked ? `ACL ${aclBlocked.aclId} denied by ${aclBlocked.node.name}:${aclBlocked.iface.name} ${aclBlocked.direction}` : pingFailureReason(source, dest, path, returnRouteOk));
+  const status = endpointReachabilityStatus(sourceId, destId, { ...flow, countAcl: true });
+  const path = status.path || [];
+  const up = status.ok;
   const delay = up ? path.reduce((sum, nodeId, idx) => {
     const next = path[idx + 1];
     if (!next) return sum;
-    const link = state.links.find((l) => linkUsableForTraffic(l) && ((l.a === nodeId && l.b === next) || (l.b === nodeId && l.a === next)));
+    const link = linkBetween(nodeId, next, linkUsableForTraffic);
     return sum + (link?.latency || 1);
   }, 1) : 0;
+  const probes = up ? buildPingProbes(path, delay, 5) : [];
+  const received = probes.filter((probe) => probe.ok).length;
+  const lossPercent = up ? Math.round((1 - received / Math.max(1, probes.length)) * 100) : 100;
+  const result = up && received > 0 ? "Success" : "Failed";
+  const reason = up
+    ? (lossPercent ? `部分丢包 ${lossPercent}%` : "")
+    : (status.reason || pingFailureReason(source, dest, path, false));
   const packet = {
     id: state.counters.packet++,
     time: new Date().toLocaleTimeString(),
     source: source?.name || "?",
     dest: dest?.name || "?",
+    sourceIp: flow.sourceIp || primaryIp(source),
     destIp: flow.destIp || primaryIp(dest),
     protocol: "ICMP",
     path: path.map((id) => getNode(id)?.name).join(" -> "),
-    result: up ? "Success" : "Failed",
+    pathIds: [...path],
+    result,
     reason,
-    delay
+    delay,
+    probes
   };
   state.packets.unshift(packet);
+  state.packets = state.packets.slice(0, 240);
   flashPath(path);
-  log(up ? "ok" : "bad", "PING", `${packet.source} -> ${packet.dest}: ${packet.result}${reason ? ` (${reason})` : ""}`);
+  log(result === "Success" ? "ok" : "bad", "PING", `${packet.source} -> ${packet.dest}: ${packet.result}${reason ? ` (${reason})` : ""}`);
   renderAll();
   return packet;
+}
+
+function buildPingProbes(path, baseDelay = 1, count = 5) {
+  const loss = pathLossPercent(path);
+  return Array.from({ length: count }, (_, index) => {
+    const ok = loss <= 0 ? true : (loss >= 100 ? false : Math.random() * 100 >= loss);
+    return {
+      ok,
+      time: Math.max(1, Math.round(baseDelay + index % 3 + Math.random() * 2))
+    };
+  });
+}
+
+function pathLossPercent(path = []) {
+  let passRate = 1;
+  path.forEach((nodeId, index) => {
+    const next = path[index + 1];
+    if (!next) return;
+    const link = linkBetween(nodeId, next, linkUsableForTraffic);
+    const loss = clamp(Number(link?.loss) || 0, 0, 100) / 100;
+    passRate *= (1 - loss);
+  });
+  return Math.round((1 - passRate) * 100);
 }
 
 function pingFailureReason(source, dest, path, returnRouteOk = true) {
@@ -3531,7 +3971,7 @@ function flashPath(path) {
   path.forEach((nodeId, index) => {
     const next = path[index + 1];
     if (!next) return;
-    const link = state.links.find((l) => (l.a === nodeId && l.b === next) || (l.b === nodeId && l.a === next));
+    const link = linkBetween(nodeId, next);
     if (link) ids.push(link.id);
   });
   flashLinks(ids);
@@ -3557,15 +3997,59 @@ function findPath(sourceId, destId, options = {}) {
       physicalFallback = physicalFallback.length ? physicalFallback : path;
       continue;
     }
-    state.links.filter((l) => linkUsableForTraffic(l) && (l.a === last || l.b === last)).forEach((link) => {
+    linksOf(last, linkUsableForTraffic).forEach((link) => {
       const next = link.a === last ? link.b : link.a;
       const node = getNode(next);
-      if (!path.includes(next) && node?.running && path.length <= state.nodes.length) {
+      if (node?.running && pathCanVisit(path, next, node) && path.length <= state.nodes.length * 2) {
         queue.push(path.concat(next));
       }
     });
   }
   return physicalFallback.length && !hasIpRoutingContext(physicalFallback, options.sourceIp, options.destIp) ? physicalFallback : [];
+}
+
+function findTrafficPath(sourceId, destId) {
+  return findPathByLinkPredicate(sourceId, destId, linkUsableForTraffic);
+}
+
+function findPhysicalPath(sourceId, destId) {
+  return findPathByLinkPredicate(sourceId, destId, (link) => linkEffectiveStatus(link) === "up");
+}
+
+function findPathByLinkPredicate(sourceId, destId, predicate) {
+  if (!sourceId || !destId) return [];
+  const queue = [[sourceId]];
+  while (queue.length) {
+    const path = queue.shift();
+    const last = path[path.length - 1];
+    if (last === destId) return path;
+    linksOf(last, predicate).forEach((link) => {
+      const next = link.a === last ? link.b : link.a;
+      const node = getNode(next);
+      if (node?.running && pathCanVisit(path, next, node) && path.length <= state.nodes.length * 2) {
+        queue.push(path.concat(next));
+      }
+    });
+  }
+  return [];
+}
+
+function firstTrafficBlock(path = []) {
+  for (let index = 0; index < path.length - 1; index += 1) {
+    const current = path[index];
+    const next = path[index + 1];
+    const link = linkBetween(current, next);
+    if (!link) continue;
+    const diagnostic = linkDiagnostic(link);
+    if (diagnostic.traffic !== "up") return diagnostic;
+  }
+  return null;
+}
+
+function pathCanVisit(path, nextId, node) {
+  const visits = path.filter((id) => id === nextId).length;
+  const maxVisits = ["switch", "hub"].includes(node?.type) ? 2 : 1;
+  return visits < maxVisits;
 }
 
 function linkUsableForTraffic(link) {
@@ -3574,24 +4058,50 @@ function linkUsableForTraffic(link) {
   return linkVlanCompatible(link);
 }
 
+function linkDiagnostic(link) {
+  const a = getNode(link.a);
+  const b = getNode(link.b);
+  if (!a || !b) return { physical: "down", traffic: "blocked", reason: "端点设备不存在" };
+  if (link.status !== "up") return { physical: "down", traffic: "blocked", reason: "链路被手动关闭" };
+  if (!a.running || !b.running) return { physical: "down", traffic: "blocked", reason: "链路两端设备需要启动" };
+  const aPort = findExistingInterface(a, link.aPort);
+  const bPort = findExistingInterface(b, link.bPort);
+  if (aPort?.status === "down") return { physical: "down", traffic: "blocked", reason: `${a.name} ${aPort.name} 已 shutdown` };
+  if (bPort?.status === "down") return { physical: "down", traffic: "blocked", reason: `${b.name} ${bPort.name} 已 shutdown` };
+  if (/^console$/i.test(String(link.cable || ""))) return { physical: "up", traffic: "blocked", reason: "Console 线缆只用于管理口，不承载业务数据" };
+  if (!linkVlanCompatible(link)) return { physical: "up", traffic: "blocked", reason: `VLAN 不匹配（${a.name}:${formatAllowedVlans(aPort, a)} / ${b.name}:${formatAllowedVlans(bPort, b)}）` };
+  return { physical: "up", traffic: "up", reason: "业务流量可通过" };
+}
+
+function formatAllowedVlans(iface, node) {
+  if (!iface) return "Auto";
+  const vlans = [...interfaceAllowedVlans(iface, node)];
+  if (!vlans.length || vlans.includes("*")) return "all";
+  return vlans.join(",");
+}
+
 function linkVlanCompatible(link) {
   const a = getNode(link.a);
   const b = getNode(link.b);
   const aIface = a ? findExistingInterface(a, link.aPort) : null;
   const bIface = b ? findExistingInterface(b, link.bPort) : null;
   if (!aIface || !bIface) return true;
-  const aVlans = interfaceAllowedVlans(aIface);
-  const bVlans = interfaceAllowedVlans(bIface);
+  const aVlans = interfaceAllowedVlans(aIface, a);
+  const bVlans = interfaceAllowedVlans(bIface, b);
   if (aVlans.has("*") || bVlans.has("*")) return true;
   return [...aVlans].some((vlan) => bVlans.has(vlan));
 }
 
-function interfaceAllowedVlans(iface) {
+function interfaceAllowedVlans(iface, node = null) {
   if (iface.dot1q) return new Set([String(iface.dot1q)]);
+  const subVlans = node?.interfaces
+    ?.filter((item) => item.name.startsWith(`${iface.name}.`) && item.dot1q)
+    .map((item) => String(item.dot1q)) || [];
+  if (subVlans.length) return new Set(subVlans);
   const linkType = String(iface.linkType || "access").toLowerCase();
   if (linkType === "trunk") {
     const allow = iface.trunkAllow || [];
-    return allow.length ? new Set(allow.map(String)) : new Set(["*"]);
+    return allow.length ? new Set(allow.map((item) => String(item).toLowerCase() === "all" ? "*" : String(item))) : new Set(["*"]);
   }
   return new Set([String(iface.vlan || "1")]);
 }
@@ -3608,6 +4118,36 @@ function routeAllowsPath(path, options = {}) {
   if (!endpointHasExit(dest, destIp, sourceIp, path)) return false;
   const nodes = path.map(getNode);
   return nodes.every((node, index) => !isRoutingNode(node) || nodeCanRouteTo(node, destIp, nodes, index));
+}
+
+function routeFailureReason(path, options = {}) {
+  if (path.length < 2) return "没有可达链路路径";
+  const source = getNode(path[0]);
+  const dest = getNode(path[path.length - 1]);
+  const sourceIp = options.sourceIp || primaryIp(source);
+  const destIp = options.destIp || primaryIp(dest);
+  if (!hasIpRoutingContext(path, sourceIp, destIp)) return "";
+  if (!sourceIp) return `${source?.name || "源设备"} 未配置 IP 地址`;
+  if (!destIp) return `${dest?.name || "目的设备"} 未配置 IP 地址`;
+  if (!endpointHasExit(source, sourceIp, destIp, path)) return `${source.name} 缺少可用默认网关`;
+  if (!endpointHasExit(dest, destIp, sourceIp, path)) return `${dest.name} 缺少返回网关`;
+  const nodes = path.map(getNode);
+  const failedRouter = nodes.find((node, index) => isRoutingNode(node) && !nodeCanRouteTo(node, destIp, nodes, index));
+  if (failedRouter) return `${failedRouter.name} 缺少到 ${destIp} 的直连、动态或静态路由`;
+  return "";
+}
+
+function normalizeFlowIps(source, dest, flow = {}) {
+  return {
+    ...flow,
+    sourceIp: flow.sourceIp || primaryIp(source),
+    destIp: flow.destIp || primaryIp(dest)
+  };
+}
+
+function formatAclBlockReason(block) {
+  if (!block) return "";
+  return `ACL ${block.aclId} 在 ${block.node.name}:${block.iface?.name || "接口"} ${block.direction} 拒绝`;
 }
 
 function hasIpRoutingContext(path, sourceIp = "", destIp = "") {
@@ -3877,11 +4417,15 @@ function renderIpAddressList() {
   const rows = state.nodes.flatMap((node) => node.interfaces
     .filter((iface) => iface.ip)
     .map((iface) => ({ node, iface })));
-  $("ipAddressList").innerHTML = rows.length ? rows.map(({ node, iface }) => `
-    <div class="ip-item" data-ip-node="${node.id}">
-      <strong><span>${escapeHtml(node.name)}</span><span>${escapeHtml(iface.ip)}</span></strong>
-      <span>${escapeHtml(iface.name)} · ${escapeHtml(iface.mask || "mask -")} · ${escapeHtml(node.gateway ? `GW ${node.gateway}` : node.model)}</span>
-    </div>`).join("") : `<div class="ip-item"><span>暂无 IP 地址</span></div>`;
+  const ipHtml = rows.length
+    ? collapsedCardsHtml(rows, ipAddressRow, (count) => `展开其他 ${count} 个 IP`)
+    : `<div class="ip-item"><span>暂无 IP 地址</span></div>`;
+  const health = topologyHealthItems();
+  $("ipAddressList").innerHTML = `${ipHtml}
+    <div class="health-section">
+      <div class="subsection-label">健康检查</div>
+      <div class="health-list">${collapsedCardsHtml(health, healthRow, (count) => `展开其他 ${count} 项`)}</div>
+    </div>`;
   document.querySelectorAll("[data-ip-node]").forEach((item) => {
     item.addEventListener("click", () => {
       state.selected = { kind: "node", id: item.dataset.ipNode };
@@ -3891,13 +4435,61 @@ function renderIpAddressList() {
       centerNode(item.dataset.ipNode);
     });
   });
+  bindHealthActions();
+}
+
+function bindHealthActions() {
+  document.querySelectorAll("[data-health-node]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.selected = { kind: "node", id: btn.dataset.healthNode };
+      state.multiSelected = [];
+      state.multiAnnotations = [];
+      centerNode(btn.dataset.healthNode);
+      renderAll();
+    });
+  });
+  document.querySelectorAll("[data-health-link]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.selected = { kind: "link", id: btn.dataset.healthLink };
+      state.multiSelected = [];
+      state.multiAnnotations = [];
+      centerLink(btn.dataset.healthLink);
+      renderAll();
+    });
+  });
+}
+
+function ipAddressRow({ node, iface }) {
+  return `<div class="ip-item" data-ip-node="${node.id}">
+    <strong><span>${escapeHtml(node.name)}</span><span>${escapeHtml(iface.ip)}</span></strong>
+    <span>${escapeHtml(iface.name)} · ${escapeHtml(iface.mask || "mask -")} · ${escapeHtml(node.gateway ? `GW ${node.gateway}` : node.model)}</span>
+  </div>`;
 }
 
 function renderPackets() {
   $("packetRows").innerHTML = state.packets.map((p) => {
     const result = `${p.result}${p.delay ? ` ${p.delay}ms` : ""}${p.reason ? ` - ${p.reason}` : ""}`;
-    return `<tr><td>${p.time}</td><td>${escapeHtml(p.source)}</td><td>${escapeHtml(p.dest)}</td><td>${escapeHtml(p.protocol)}</td><td>${escapeHtml(p.path || "-")}</td><td title="${escapeHtml(p.reason || "")}">${escapeHtml(result)}</td></tr>`;
+    return `<tr data-packet-id="${p.id}"><td>${p.time}</td><td>${escapeHtml(p.source)}</td><td>${escapeHtml(p.dest)}</td><td>${escapeHtml(p.protocol)}</td><td>${escapeHtml(p.path || "-")}</td><td title="${escapeHtml(p.reason || "")}">${escapeHtml(result)}</td></tr>`;
   }).join("");
+  document.querySelectorAll("[data-packet-id]").forEach((row) => {
+    row.addEventListener("click", () => replayPacketPath(Number(row.dataset.packetId)));
+  });
+}
+
+function replayPacketPath(packetId) {
+  const packet = state.packets.find((item) => item.id === packetId);
+  const path = packetPathIds(packet);
+  if (path.length < 2) return toast("该报文没有可回放路径。");
+  flashPath(path);
+  centerPath(path);
+}
+
+function packetPathIds(packet) {
+  if (Array.isArray(packet?.pathIds) && packet.pathIds.length) return packet.pathIds;
+  return String(packet?.path || "")
+    .split("->")
+    .map((name) => state.nodes.find((node) => node.name === name.trim())?.id)
+    .filter(Boolean);
 }
 
 function renderEvents() {
@@ -4379,6 +4971,34 @@ function centerNode(id) {
   viewport.scrollTo({
     left: Math.max(0, (node.x + 48) * state.zoom - viewport.clientWidth / 2),
     top: Math.max(0, (node.y + 37) * state.zoom - viewport.clientHeight / 2),
+    behavior: "smooth"
+  });
+}
+
+function centerLink(id) {
+  const link = getLink(id);
+  const a = link ? getNode(link.a) : null;
+  const b = link ? getNode(link.b) : null;
+  if (!a || !b) return;
+  const viewport = $("stageViewport");
+  const x = (a.x + b.x) / 2 + 48;
+  const y = (a.y + b.y) / 2 + 37;
+  viewport.scrollTo({
+    left: Math.max(0, x * state.zoom - viewport.clientWidth / 2),
+    top: Math.max(0, y * state.zoom - viewport.clientHeight / 2),
+    behavior: "smooth"
+  });
+}
+
+function centerPath(path = []) {
+  const nodes = path.map(getNode).filter(Boolean);
+  if (!nodes.length) return;
+  const viewport = $("stageViewport");
+  const x = nodes.reduce((sum, node) => sum + node.x + 48, 0) / nodes.length;
+  const y = nodes.reduce((sum, node) => sum + node.y + 37, 0) / nodes.length;
+  viewport.scrollTo({
+    left: Math.max(0, x * state.zoom - viewport.clientWidth / 2),
+    top: Math.max(0, y * state.zoom - viewport.clientHeight / 2),
     behavior: "smooth"
   });
 }
@@ -5026,7 +5646,9 @@ function parseVrpTranscriptBundle(raw, fileName) {
   return {
     mode: "config-bundle",
     projectName: cleanFileName(fileName),
-    configs: Array.from(configs.entries()).map(([name, lines]) => ({ name, config: lines.join("\n") }))
+    configs: Array.from(configs.entries()).map(([name, lines]) => ({ name, config: lines.join("\n") })),
+    endpoints: parseEndpointConfigsFromText(raw),
+    dnsRecords: parseDnsHintsFromText(raw)
   };
 }
 
@@ -5039,9 +5661,77 @@ function applyConfigBundle(imported) {
     }
     applyVrpConfig(node, item.config);
   });
-  log("ok", "IMPORT", `导入 VRP 配置记录：${imported.configs.length} 台设备`);
-  toast(`已导入配置记录：${imported.configs.length} 台设备。`);
+  applyEndpointConfigBundle(imported.endpoints || [], imported.configs.length, imported.dnsRecords || []);
+  log("ok", "IMPORT", `导入 VRP 配置记录：${imported.configs.length} 台设备，终端 ${imported.endpoints?.length || 0} 台`);
+  toast(`已导入配置记录：${imported.configs.length} 台网络设备，${imported.endpoints?.length || 0} 台终端。`);
   renderAll();
+}
+
+function parseEndpointConfigsFromText(raw) {
+  const endpoints = new Map();
+  const lines = String(raw || "").split(/\r?\n/);
+  lines.forEach((line) => {
+    const name = line.match(/((?:Client|PC|Server)\s*\d+)/i)?.[1]?.replace(/\s+/g, "");
+    if (!name) return;
+    const ips = line.match(/(?:\d{1,3}\.){3}\d{1,3}/g) || [];
+    if (!ips.length) return;
+    const isServer = /^Server/i.test(name);
+    if (!isServer && ips.length < 2) return;
+    const score = ips.length + (/\bIP\s*[:：]/i.test(line) ? 3 : 0) + (/gateway|网关/i.test(line) ? 1 : 0) + (/dns/i.test(line) ? 1 : 0);
+    const key = name.toLowerCase();
+    if ((endpoints.get(key)?.score || 0) > score) return;
+    endpoints.set(key, {
+      name,
+      type: isServer ? "server" : "client",
+      ip: ips[0],
+      mask: ips[1] || "255.255.255.0",
+      gateway: ips[2] || "",
+      dns: ips[3] || "",
+      score
+    });
+  });
+  return Array.from(endpoints.values()).map(({ score, ...item }) => item);
+}
+
+function parseDnsHintsFromText(raw) {
+  const domains = [...new Set((String(raw || "").match(/\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+){2,}\b/gi) || [])
+    .map((item) => item.toLowerCase())
+    .filter((item) => !/^\d+\.\d+\.\d+/.test(item)))];
+  return domains.map((host) => ({ host, ip: "" }));
+}
+
+function applyEndpointConfigBundle(endpoints, offset = 0, dnsRecords = []) {
+  if (!Array.isArray(endpoints) || !endpoints.length) return;
+  const server2 = endpoints.find((item) => /^server\s*2$/i.test(item.name));
+  const dnsHost = endpoints.find((item) => item.type === "server")?.name || "";
+  endpoints.forEach((item, index) => {
+    let node = state.nodes.find((candidate) => candidate.name.toLowerCase() === item.name.toLowerCase());
+    if (!node) {
+      node = addDevice(item.type, { x: 120 + (index % 4) * 170, y: 520 + Math.floor((index + offset) / 4) * 130 }, { name: item.name, running: state.running });
+    }
+    const iface = node.interfaces[0] || findInterfaceByName(node, "Ethernet0/0/1");
+    iface.ip = item.ip;
+    iface.mask = item.mask;
+    node.gateway = item.gateway || node.gateway || "";
+    node.dns = item.dns || node.dns || "";
+    if (node.type === "server") {
+      const services = ensureServerServices(node);
+      services.http.enabled = true;
+      services.ftp.enabled = true;
+      if (node.dns || node.name === dnsHost) {
+        services.dns.enabled = true;
+        services.dns.records[`www.${node.name.toLowerCase()}.local`] = item.ip;
+        dnsRecords.forEach((record) => {
+          const ip = record.ip || server2?.ip || item.ip;
+          if (record.host && ip) services.dns.records[record.host] = ip;
+        });
+      }
+      node.protocols.HTTP = true;
+      node.protocols.FTP = true;
+      node.protocols.DNS = services.dns.enabled;
+    }
+    updateEndpointNotes(node);
+  });
 }
 
 function parseJsonTopology(data, fileName) {
@@ -5262,6 +5952,7 @@ function hydrate(data) {
   state.nodes = (data.nodes || []).map(migrateSavedNode);
   state.stage = normalizeStageSize(data.stage);
   state.links = (data.links || []).map(serializeLink);
+  rebuildLinkIndex();
   state.annotations = data.annotations || [];
   state.packets = data.packets || [];
   state.events = data.events || [];
@@ -5327,7 +6018,7 @@ function enabledProtocols() {
 
 function freePort(node) {
   const used = new Set();
-  state.links.forEach((l) => {
+  linksOf(node.id).forEach((l) => {
     if (l.a === node.id) used.add(l.aPort);
     if (l.b === node.id) used.add(l.bPort);
   });
@@ -5501,7 +6192,7 @@ function ipInNetwork(ip, networkIp, mask) {
 }
 
 function neighborNodes(id) {
-  return state.links.filter((l) => linkUsableForTraffic(l) && (l.a === id || l.b === id)).map((l) => getNode(l.a === id ? l.b : l.a)).filter(Boolean);
+  return linksOf(id, linkUsableForTraffic).map((l) => getNode(l.a === id ? l.b : l.a)).filter(Boolean);
 }
 
 function findInterfaceByName(node, name) {
@@ -5541,6 +6232,7 @@ function deleteNode(id) {
   closeNodeWindows(id);
   state.nodes = state.nodes.filter((n) => n.id !== id);
   state.links = state.links.filter((l) => l.a !== id && l.b !== id);
+  rebuildLinkIndex();
   state.selected = null;
   state.multiSelected = state.multiSelected.filter((nodeId) => nodeId !== id);
   log("warn", "DELETE", `删除设备 ${node?.name || id}`);
@@ -5549,6 +6241,7 @@ function deleteNode(id) {
 
 function deleteLink(id) {
   state.links = state.links.filter((l) => l.id !== id);
+  rebuildLinkIndex();
   state.selected = null;
   log("warn", "DELETE", `删除链路 ${id}`);
   renderAll();
@@ -5564,6 +6257,7 @@ function deleteAnnotation(id) {
 
 function log(level, source, message) {
   state.events.unshift({ time: new Date().toLocaleTimeString(), level, source, message });
+  state.events = state.events.slice(0, 240);
   renderEvents();
 }
 
