@@ -9,7 +9,7 @@
 直接打开：
 
 ```text
-C:\Users\wax66\Desktop\ENSP\index.html
+.\ENSP\index.html
 ```
 
 如果浏览器对本地文件访问限制较多，可以在项目目录启动静态服务：
