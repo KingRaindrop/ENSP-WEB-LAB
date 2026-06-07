@@ -5104,15 +5104,72 @@ function updateProjectTitle(status = "") {
 async function loadClientIp() {
   const badge = $("currentIpBadge");
   if (!badge) return;
+
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2600);
-    const response = await fetch("https://api.ipify.org?format=json", { signal: controller.signal });
+    const timer = setTimeout(() => controller.abort(), 3000);
+
+    // 尝试多个 IP 检测 API，提高成功率
+    const apis = [
+      "https://api.ipify.org?format=json",
+      "https://api64.ipify.org?format=json",
+      "https://ipapi.co/json/",
+      "https://api.ip.sb/ip"
+    ];
+
+    let success = false;
+
+    for (const api of apis) {
+      if (success) break;
+
+      try {
+        const response = await fetch(api, {
+          signal: controller.signal,
+          mode: 'cors',
+          cache: 'no-cache'
+        });
+
+        if (response.ok) {
+          const contentType = response.headers.get('content-type');
+
+          if (contentType && contentType.includes('application/json')) {
+            const data = await response.json();
+            const ip = data.ip || data.query || data;
+
+            if (ip && typeof ip === 'string' && /^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
+              badge.textContent = `IP ADDRESS: ${ip}`;
+              success = true;
+              break;
+            }
+          } else {
+            // 纯文本响应
+            const text = await response.text();
+            const ip = text.trim();
+
+            if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
+              badge.textContent = `IP ADDRESS: ${ip}`;
+              success = true;
+              break;
+            }
+          }
+        }
+      } catch (err) {
+        // 继续尝试下一个 API
+        continue;
+      }
+    }
+
     clearTimeout(timer);
-    const data = await response.json();
-    badge.textContent = `IP ADDRESS: ${data.ip || "Unknown"}`;
-  } catch {
+
+    if (!success) {
+      badge.textContent = "IP ADDRESS: Local / Offline";
+    }
+
+  } catch (error) {
     badge.textContent = "IP ADDRESS: Local / Offline";
+    if (window.DEBUG) {
+      console.warn('IP detection failed:', error);
+    }
   }
 }
 
