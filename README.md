@@ -3,9 +3,7 @@
 当前版本：**v1.1.0**（[更新日志](docs/CHANGELOG.md) ｜ [发行说明](docs/RELEASE-v1.1.0.md)）
 
 体验网址：
-
-- 纯静态版：https://ensp.resky.us.ci/
-- Cloudflare 云端版（支持 KV 云端项目同步）：https://ensp.closeai.wtf/
+https://ensp.closeai.wtf/
 
 一个纯前端的 eNSP 风格网络实验平台。项目不依赖后端服务，直接用浏览器打开 `index.html` 即可运行，适合网络课程教学、拓扑预览、eNSP 工程导入、基础协议实验和命令行演示。可选地，`cf_ver/` 提供了带云端项目存储的 Cloudflare Worker 部署形态。
 
