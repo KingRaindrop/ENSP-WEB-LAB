@@ -8,13 +8,16 @@
 
 | 文档 | 说明 | 路径 |
 |------|------|------|
-| 🚀 **快速开始** | 增强包介绍和快速上手 | [docs/README-ENHANCEMENTS.md](docs/README-ENHANCEMENTS.md) |
-| 🔧 **集成指南** | 详细集成步骤（⭐ 推荐） | [docs/INTEGRATION-GUIDE.md](docs/INTEGRATION-GUIDE.md) |
-| 📖 **API 文档** | 完整 API 参考和使用说明 | [docs/ENHANCEMENT-DOCS.md](docs/ENHANCEMENT-DOCS.md) |
-| 📊 **改进总结** | 改进效果和数据对比 | [docs/PROJECT-SUMMARY.md](docs/PROJECT-SUMMARY.md) |
-| 🎯 **快速参考** | API 速查卡片 | [docs/QUICK-REFERENCE.md](docs/QUICK-REFERENCE.md) |
-| 📋 **改进计划** | 完整改进计划和优先级 | [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md) |
-| ✅ **完成报告** | 最终交付报告 | [docs/COMPLETION-REPORT.md](docs/COMPLETION-REPORT.md) |
+| 📦 **发行说明** | 当前版本变更与发布清单 | [RELEASE-v1.1.0.md](./RELEASE-v1.1.0.md) |
+| 🗒️ **更新日志** | 全部版本历史 | [CHANGELOG.md](./CHANGELOG.md) |
+| 🐞 **审查报告** | 逻辑审查与修复状态 | [BUG.md](./BUG.md) |
+| 🚀 **快速开始** | 增强包介绍和快速上手 | [README-ENHANCEMENTS.md](./README-ENHANCEMENTS.md) |
+| 🔧 **集成指南** | 详细集成步骤（⭐ 推荐） | [INTEGRATION-GUIDE.md](./INTEGRATION-GUIDE.md) |
+| 📖 **API 文档** | 完整 API 参考和使用说明 | [ENHANCEMENT-DOCS.md](./ENHANCEMENT-DOCS.md) |
+| 📊 **改进总结** | 改进效果和数据对比 | [PROJECT-SUMMARY.md](./PROJECT-SUMMARY.md) |
+| 🎯 **快速参考** | API 速查卡片 | [QUICK-REFERENCE.md](./QUICK-REFERENCE.md) |
+| 📋 **改进计划** | 完整改进计划和优先级 | [IMPROVEMENTS.md](./IMPROVEMENTS.md) |
+| ✅ **完成报告** | 最终交付报告 | [COMPLETION-REPORT.md](./COMPLETION-REPORT.md) |
 
 ---
 
@@ -71,7 +74,7 @@ if ((event.key === '?' || (event.shiftKey && event.key === '/')) && !isTyping())
 }
 ```
 
-**完整集成指南请查看：** [docs/INTEGRATION-GUIDE.md](docs/INTEGRATION-GUIDE.md)
+**完整集成指南请查看：** [docs/INTEGRATION-GUIDE.md](./INTEGRATION-GUIDE.md)
 
 ---
 
@@ -152,7 +155,7 @@ const ok = await EnspEnhancements.showConfirmDialog({
 EnspEnhancements.showShortcutsPanel();
 ```
 
-更多 API 详见：[docs/ENHANCEMENT-DOCS.md](docs/ENHANCEMENT-DOCS.md)
+更多 API 详见：[docs/ENHANCEMENT-DOCS.md](./ENHANCEMENT-DOCS.md)
 
 ---
 
@@ -176,9 +179,9 @@ EnspEnhancements.showShortcutsPanel();
 
 详细文档请查看 `docs/` 目录：
 
-- **遇到问题？** → [docs/ENHANCEMENT-DOCS.md](docs/ENHANCEMENT-DOCS.md) 第 6 章
-- **想学习 API？** → [docs/ENHANCEMENT-DOCS.md](docs/ENHANCEMENT-DOCS.md) 第 4 章
-- **快速查找？** → [docs/QUICK-REFERENCE.md](docs/QUICK-REFERENCE.md)
+- **遇到问题？** → [docs/ENHANCEMENT-DOCS.md](./ENHANCEMENT-DOCS.md) 第 6 章
+- **想学习 API？** → [docs/ENHANCEMENT-DOCS.md](./ENHANCEMENT-DOCS.md) 第 4 章
+- **快速查找？** → [docs/QUICK-REFERENCE.md](./QUICK-REFERENCE.md)
 
 ---
 
@@ -195,4 +198,4 @@ EnspEnhancements.showShortcutsPanel();
 
 **立即开始使用增强功能，提升你的 eNSP Web Lab 体验！** 🚀
 
-详细集成步骤：[docs/INTEGRATION-GUIDE.md](docs/INTEGRATION-GUIDE.md)
+详细集成步骤：[docs/INTEGRATION-GUIDE.md](./INTEGRATION-GUIDE.md)

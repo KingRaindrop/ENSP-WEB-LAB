@@ -2,9 +2,11 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://api.ipify.org https://api64.ipify.org https://ipapi.co https://api.ip.sb; object-src 'none'; base-uri 'self'; form-action 'self'" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>eNSP Web Lab</title>
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles-improvements.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -15,7 +17,7 @@
             <strong>eNSP Web Lab</strong>
             <div class="project-line">
               <span id="projectName">EnterpriseCampus.lab</span>
-              <span id="currentIpBadge" class="current-ip">IP ADDRESS: Detecting...</span>
+              <span id="currentIpBadge" class="current-ip">IP ADDRESS: 点击检测（会请求外部服务）</span>
             </div>
           </div>
         </div>
@@ -176,6 +178,8 @@
       </section>
     </div>
 
+    <script src="./command-autocomplete.js"></script>
+    <script src="./app-improvements.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

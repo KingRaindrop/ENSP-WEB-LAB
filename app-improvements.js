@@ -2,6 +2,12 @@
 // eNSP Web Lab - 改进增强模块
 // ===================================================================
 
+// -------------------- 本地 HTML 转义（防 XSS） --------------------
+// 本文件先于 app.js 加载，不能依赖全局 escapeHtml，故本地实现
+const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+}[c]));
+
 // -------------------- 错误处理增强 --------------------
 
 /**
@@ -67,7 +73,7 @@ function showLoading(message = '加载中...') {
   overlay.innerHTML = `
     <div class="loading-spinner">
       <div class="spinner-ring"></div>
-      <div class="loading-text">${message}</div>
+      <div class="loading-text">${escHtml(message)}</div>
     </div>
   `;
 
@@ -135,14 +141,14 @@ function showConfirmDialog(options) {
     dialog.innerHTML = `
       <div class="confirm-dialog">
         <div class="confirm-header ${dangerous ? 'dangerous' : ''}">
-          <strong>${title}</strong>
+          <strong>${escHtml(title)}</strong>
         </div>
         <div class="confirm-body">
-          <p>${message}</p>
+          <p>${escHtml(message)}</p>
         </div>
         <div class="confirm-actions">
-          <button class="dialog-btn cancel-btn">${cancelText}</button>
-          <button class="dialog-btn confirm-btn ${dangerous ? 'danger-btn' : 'primary-btn'}">${confirmText}</button>
+          <button class="dialog-btn cancel-btn">${escHtml(cancelText)}</button>
+          <button class="dialog-btn confirm-btn ${dangerous ? 'danger-btn' : 'primary-btn'}">${escHtml(confirmText)}</button>
         </div>
       </div>
     `;
@@ -222,7 +228,7 @@ function showToast(toast) {
   el.className = `toast-enhanced toast-${type}`;
   el.innerHTML = `
     <span class="toast-icon">${icons[type] || icons.info}</span>
-    <span class="toast-message">${message}</span>
+    <span class="toast-message">${escHtml(message)}</span>
   `;
 
   document.body.appendChild(el);
@@ -357,7 +363,7 @@ function showProgress(message = '处理中...') {
   bar.className = 'progress-overlay';
   bar.innerHTML = `
     <div class="progress-container">
-      <div class="progress-message">${message}</div>
+      <div class="progress-message">${escHtml(message)}</div>
       <div class="progress-bar">
         <div class="progress-fill"></div>
       </div>

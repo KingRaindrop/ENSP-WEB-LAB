@@ -1,0 +1,28 @@
+# 依赖
+node_modules/
+
+# Cloudflare / wrangler 本地状态与缓存（含账号信息缓存，切勿提交）
+.wrangler/
+node_modules/.cache/
+.dev.vars
+.dev.vars.*
+
+# 环境变量与密钥
+.env
+.env.*
+*.pem
+*.key
+
+# 构建产物与临时文件
+dist/
+tmp/
+*.log
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/
+.idea/
+*.swp

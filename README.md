@@ -1,7 +1,13 @@
 # eNSP Web Lab
 
-体验网址：https://ensp.closeai.wtf/
-一个纯前端的 eNSP 风格网络实验平台。项目不依赖后端服务，直接用浏览器打开 `index.html` 即可运行，适合网络课程教学、拓扑预览、eNSP 工程导入、基础协议实验和命令行演示。
+当前版本：**v1.1.0**（[更新日志](docs/CHANGELOG.md) ｜ [发行说明](docs/RELEASE-v1.1.0.md)）
+
+体验网址：
+
+- 纯静态版：https://ensp.resky.us.ci/
+- Cloudflare 云端版（支持 KV 云端项目同步）：https://ensp.closeai.wtf/
+
+一个纯前端的 eNSP 风格网络实验平台。项目不依赖后端服务，直接用浏览器打开 `index.html` 即可运行，适合网络课程教学、拓扑预览、eNSP 工程导入、基础协议实验和命令行演示。可选地，`cf_ver/` 提供了带云端项目存储的 Cloudflare Worker 部署形态。
 
 ## 快速开始
 
@@ -25,10 +31,38 @@ http://localhost:8000
 
 ## 文件结构
 
-- `index.html`：页面结构，包含顶部工具栏、设备库、拓扑画布、属性面板和底部 Console。
-- `styles.css`：界面样式、设备窗口、链路、框选、拖拽、Console 等视觉细节。
-- `app.js`：核心逻辑，包含拓扑编辑、CLI、导入导出、数据持久化、协议模拟和实验模板。
-- `sample-topology.txt`：通用文本拓扑导入示例。
+```text
+.
+├── index.html                    页面结构（含 CSP）
+├── styles.css                    基础样式
+├── styles-improvements.css       增强组件样式（Toast / 对话框 / 快捷键面板等）
+├── app.js                        核心逻辑：拓扑、CLI、导入导出、持久化、协议仿真
+├── app-improvements.js           增强包：Toast / 确认对话框 / Loading / 快捷键面板
+├── command-autocomplete.js       VRP 命令自动补全引擎
+├── sample-topology.txt           文本拓扑导入示例
+├── docs/                         更新日志、发行说明、审查报告与增强包文档
+└── cf_ver/                       Cloudflare Worker 云端版（可选）
+    ├── src/worker.js             /api/projects 走 KV，其余走静态资源
+    ├── public/                   前端资源（由 sync-public.mjs 从根目录同步）
+    ├── scripts/sync-public.mjs   根目录 → public 的同步脚本
+    └── wrangler.toml             KV / assets / 域名配置
+```
+
+## 云端版（可选）
+
+`cf_ver/` 把同一个前端包装成 Cloudflare Worker，静态资源由 assets 绑定提供，云端项目通过 KV + `/api/projects` 存取：
+
+```bash
+cd cf_ver
+npm install
+npm run sync                     # 同步根目录前端文件到 public/
+npx wrangler secret put ADMIN_TOKEN   # 首次必须配置，未配置时 /api/* 返回 503
+npm run deploy
+```
+
+页面右下角会出现 `☁` 按钮，支持云端保存、列表、加载和删除。**纯静态部署不需要 `cf_ver/`**，删除即可，本地 localStorage 行为不受影响。
+
+详见 [cf_ver/README.md](cf_ver/README.md)。
 
 ## 主要功能
 
@@ -79,6 +113,7 @@ PC、Client、Server 双击后会打开可拖动窗口：
 - 设备必须开机后才能进入 Console。
 - 支持用户视图、系统视图、接口视图、VLAN、OSPF、ACL、DHCP、AAA、用户接口等常见配置流程。
 - 支持 `int g0/0/0`、`int e0/0/1`、`ip add`、`un sh`、`dis`、`q` 等常用缩写。
+- 输入框支持 VRP 命令自动补全：`Tab` 补全、方向键选择、缩写自动展开。
 
 ## Server 服务
 
@@ -209,6 +244,7 @@ clear
 - Ctrl+S：保存项目。
 - Ctrl+0：适配画布。
 - Ctrl+= / Ctrl+-：放大/缩小。
+- `?`：打开快捷键帮助面板。
 - Esc：取消当前连线、Ping、弹窗选择或选区。
 
 ## 实验模板
@@ -244,6 +280,15 @@ clear
 - 已打开设备窗口的位置。
 
 注意：浏览器站点数据被清理后，本地项目会丢失。重要实验建议使用顶部“下载/导出”保存 JSON 备份。
+
+保存时若遇到浏览器存储配额不足，会自动淘汰最旧的历史项目并提示；仍失败时可减少 Server 目录文件数量或改用“下载”导出 JSON。
+
+## 安全说明
+
+- 页面带有 `Content-Security-Policy`，脚本只允许同源加载；Worker 版另下发 `nosniff`、`Referrer-Policy`、`X-Frame-Options`、`Permissions-Policy`。
+- 导入的工程 / 存档 / 云端项目会被校验：设备与链路 ID 做白名单处理，数值字段强制转换，结构非法直接拒绝，渲染时统一 HTML 转义。
+- 公网 IP 检测默认关闭，只有点击顶栏 IP 徽章才会请求第三方 API（域名受 CSP 限制）。
+- 云端版的 `/api/*` 需要 `ADMIN_TOKEN`，未配置时返回 503（fail-closed）；令牌只通过请求头传递，不写入 URL。
 
 导出到本地文件夹需要浏览器支持 File System Access API。Chrome/Edge 通过 `localhost` 打开时通常可用；浏览器不能静默写入固定绝对路径，需要在弹出的目录选择器中选择目标目录，例如桌面，然后系统会在其中创建项目文件夹。
 

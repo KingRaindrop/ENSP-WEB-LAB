@@ -394,6 +394,7 @@ const CommandAutocomplete = (function() {
       // Tab 键补全
       if (e.key === 'Tab') {
         e.preventDefault();
+        e.stopImmediatePropagation();
 
         if (currentSuggestions.length > 0) {
           const index = selectedIndex >= 0 ? selectedIndex : 0;
@@ -410,27 +411,30 @@ const CommandAutocomplete = (function() {
 
       // 上下箭头选择
       if (e.key === 'ArrowDown') {
-        e.preventDefault();
         if (currentSuggestions.length > 0) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
           selectedIndex = (selectedIndex + 1) % currentSuggestions.length;
           updateSelection();
+          return;
         }
-        return;
       }
 
       if (e.key === 'ArrowUp') {
-        e.preventDefault();
         if (currentSuggestions.length > 0) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
           selectedIndex = selectedIndex <= 0 ? currentSuggestions.length - 1 : selectedIndex - 1;
           updateSelection();
+          return;
         }
-        return;
       }
 
       // Enter 确认
       if (e.key === 'Enter') {
         if (selectedIndex >= 0 && currentSuggestions.length > 0) {
           e.preventDefault();
+          e.stopImmediatePropagation();
           selectSuggestion(selectedIndex);
           return;
         }
@@ -438,8 +442,12 @@ const CommandAutocomplete = (function() {
 
       // Esc 取消
       if (e.key === 'Escape') {
-        hideSuggestions();
-        return;
+        if (currentSuggestions.length > 0) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          hideSuggestions();
+          return;
+        }
       }
     });
 

@@ -1,0 +1,17 @@
+{
+  "name": "ensp-web-lab-cf",
+  "private": true,
+  "version": "1.1.0",
+  "description": "eNSP Web Lab - Cloudflare Worker 版本（静态资源 + KV 云端项目）",
+  "scripts": {
+    "sync": "node scripts/sync-public.mjs",
+    "predev": "node scripts/sync-public.mjs",
+    "dev": "wrangler dev",
+    "predeploy": "node scripts/sync-public.mjs",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^3.95.0"
+  }
+}

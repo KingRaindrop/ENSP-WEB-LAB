@@ -64,6 +64,9 @@ const UI_STATE_KEY = "ensp-web-lab-ui-v1";
 const SERVER_FOLDER_MAX_FILES = 180;
 const SERVER_FILE_PREVIEW_LIMIT = 64 * 1024;
 const SERVER_FOLDER_CONTENT_BUDGET = 768 * 1024;
+// 节点 ID 会拼进元素 id 与 CSS 选择器（#pcIp-${id}），只允许选择器安全字符
+const SAFE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+const MAX_SAVED_PROJECTS = 24;
 const state = {
   project: {
     id: "enterprise-campus",
@@ -115,6 +118,7 @@ let annotationDrag = null;
 let consoleResize = null;
 let ticker = null;
 let persistTimer = null;
+let lastAutosaveProbe = "";
 let uiStateTimer = null;
 let suppressStageClick = false;
 let suppressNodeClick = false;
@@ -170,7 +174,7 @@ function init() {
   renderDeviceCategories();
   renderPalette();
   renderLabs();
-  loadClientIp();
+  setupIpBadge();
   loadSaved() || loadTemplate("campus");
   updateProjectTitle();
   restoreOpenWindows();
@@ -212,6 +216,7 @@ function bindToolbar() {
   $("stageViewport").addEventListener("dragover", (event) => event.preventDefault());
   $("stageViewport").addEventListener("drop", dropDevice);
   $("cliInput").addEventListener("keydown", cliKeydown);
+  attachCommandAutocomplete($("cliInput"), () => state.cliMode);
   document.addEventListener("click", hideContextMenu);
   document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => setTab(tab.dataset.tab)));
   document.querySelectorAll("[data-template]").forEach((btn) => btn.addEventListener("click", () => loadTemplate(btn.dataset.template)));
@@ -229,6 +234,18 @@ function bindToolbar() {
   document.addEventListener("mouseup", stopBottomPanelResize);
   document.addEventListener("keydown", handleGlobalHotkeys);
   window.addEventListener("resize", renderAll);
+}
+
+function autocompleteMode(mode) {
+  if (mode === "ospf-area") return "ospfArea";
+  if (mode === "ip-pool") return "pool";
+  return mode || "user";
+}
+
+function attachCommandAutocomplete(input, modeGetter) {
+  if (!input || !window.CommandAutocomplete?.attachAutocomplete) return;
+  input.dataset.autocompleteAttached = "true";
+  window.CommandAutocomplete.attachAutocomplete(input, () => autocompleteMode(modeGetter?.()));
 }
 
 function renderPalette() {
@@ -302,7 +319,7 @@ function renderDevices() {
         <span class="status-dot ${node.running ? "running" : ""}"></span>
         <span class="port-dot top"></span><span class="port-dot right"></span><span class="port-dot bottom"></span><span class="port-dot left"></span>
         <span class="glyph">${info.glyph}</span>
-        <strong title="${node.name}">${node.name}</strong>
+        <strong title="${escapeHtml(node.name)}">${escapeHtml(node.name)}</strong>
       </div>`;
     el.addEventListener("mousedown", (event) => startDrag(event, node.id));
     el.addEventListener("click", (event) => {
@@ -592,7 +609,7 @@ function showContextMenu(event, kind, id) {
   if (kind === "node") {
     const node = getNode(id);
     menu.innerHTML = `
-      <button data-action="select">选择 <span>${node.name}</span></button>
+      <button data-action="select">选择 <span>${escapeHtml(node.name)}</span></button>
       <button data-action="power">${node.running ? "停止" : "启动"} <span>Power</span></button>
       <button data-action="cli">打开 CLI <span>&gt;</span></button>
       <button data-action="copy">复制配置 <span>CFG</span></button>
@@ -602,8 +619,8 @@ function showContextMenu(event, kind, id) {
   } else {
     const link = getLink(id);
     menu.innerHTML = `
-      <button data-action="select">选择链路 <span>${link.id}</span></button>
-      <button data-action="toggle">${link.status === "up" ? "断开" : "恢复"} <span>${link.status}</span></button>
+      <button data-action="select">选择链路 <span>${escapeHtml(link.id)}</span></button>
+      <button data-action="toggle">${link.status === "up" ? "断开" : "恢复"} <span>${escapeHtml(link.status)}</span></button>
       <button data-action="capture">抓包标记 <span>CAP</span></button>
       <button data-action="delete" class="danger-item">删除链路 <span>Del</span></button>`;
   }
@@ -1357,6 +1374,7 @@ function bindNetworkDeviceWindow(win, node) {
   const form = win.querySelector("[data-vrp-form]");
   const updateEchoPrompt = bindEchoPrompt(form, () => vrpPrompt(node, session));
   const input = form.querySelector("input");
+  attachCommandAutocomplete(input, () => session.mode);
   node.vrpHistory = node.vrpHistory || [];
   let vrpHistoryIndex = node.vrpHistory.length;
   input.addEventListener("keydown", (event) => {
@@ -1496,7 +1514,9 @@ function runVrpWindowCommand(win, node, session, cmd) {
     iface.trunkAllow = parseVlanList(cmd.replace(/^port\s+trunk\s+allow-pass\s+vlan\s+/i, ""));
     node.protocols.VLAN = true;
   } else if (session.mode === "interface" && lower.startsWith("port link-type ")) {
-    findInterfaceByName(node, session.iface).linkType = cmd.split(/\s+/).pop();
+    const ltIface = findInterfaceByName(node, session.iface);
+    ltIface.linkType = cmd.split(/\s+/).pop();
+    if (ltIface.linkType === "trunk" && (!ltIface.trunkAllow || !ltIface.trunkAllow.length)) ltIface.trunkAllow = ["1"];
   } else if (session.mode === "interface" && lower.startsWith("port default vlan ")) {
     findInterfaceByName(node, session.iface).vlan = cmd.split(/\s+/).pop();
     node.protocols.VLAN = true;
@@ -1760,10 +1780,10 @@ function parseAclRule(cmd, fallbackSeq = 5) {
       index += rule.destinationWildcard ? 3 : 2;
     } else if (token === "source-port") {
       rule.sourcePort = parseAclPort(parts, index);
-      index += parts[index + 1]?.toLowerCase() === "eq" ? 3 : 2;
+      index += aclPortAdvance(parts, index);
     } else if (token === "destination-port" || token === "dest-port") {
       rule.destinationPort = parseAclPort(parts, index);
-      index += parts[index + 1]?.toLowerCase() === "eq" ? 3 : 2;
+      index += aclPortAdvance(parts, index);
     } else if (token === "icmp-type") {
       rule.icmpType = parts[index + 1]?.toLowerCase() || "";
       index += 2;
@@ -1775,20 +1795,45 @@ function parseAclRule(cmd, fallbackSeq = 5) {
 }
 
 function parseAclPort(parts, index) {
-  if (parts[index + 1]?.toLowerCase() === "eq") return normalizeAclPort(parts[index + 2] || "");
+  const op = parts[index + 1]?.toLowerCase();
+  if (op === "eq") return normalizeAclPort(parts[index + 2] || "");
+  if (op === "range") { const lo = normalizeAclPort(parts[index + 2] || ""), hi = normalizeAclPort(parts[index + 3] || ""); return (lo && hi) ? { op: "range", lo, hi } : lo || hi || ""; }
+  if (op === "gt") return { op: "gt", port: normalizeAclPort(parts[index + 2] || "") };
+  if (op === "lt") return { op: "lt", port: normalizeAclPort(parts[index + 2] || "") };
   return normalizeAclPort(parts[index + 1] || "");
+}
+
+function aclPortAdvance(parts, index) {
+  const op = parts[index + 1]?.toLowerCase();
+  if (op === "range") return 4;
+  if (op === "eq" || op === "gt" || op === "lt") return 3;
+  return 2;
 }
 
 function normalizeAclPort(port) {
   const text = String(port || "").toLowerCase();
-  return ({ www: "80", http: "80", https: "443", ftp: "21", "ftp-data": "20", dns: "53" })[text] || String(port || "");
+  return ({
+    www: "80", http: "80", https: "443", ftp: "21", "ftp-data": "20", dns: "53", domain: "53",
+    telnet: "23", ssh: "22", smtp: "25", pop3: "110", tftp: "69", snmp: "161", snmptrap: "162",
+    ntp: "123", bootps: "67", bootpc: "68", syslog: "514", rip: "520"
+  })[text] || String(port || "");
 }
 
 function formatAclRule(rule, withStats = false) {
+  const portText = (p, prefix) => {
+    if (!p) return "";
+    if (p && typeof p === "object") {
+      if (p.op === "range") return `${prefix} range ${p.lo} ${p.hi}`;
+      if (p.op === "gt") return `${prefix} gt ${p.port}`;
+      if (p.op === "lt") return `${prefix} lt ${p.port}`;
+      return `${prefix} eq ${p.port || ""}`;
+    }
+    return `${prefix} eq ${p}`;
+  };
   const text = [
     `rule ${rule.seq} ${rule.action} ${rule.protocol || "ip"} source ${rule.source || "any"}${rule.sourceWildcard ? ` ${rule.sourceWildcard}` : ""} destination ${rule.destination || "any"}${rule.destinationWildcard ? ` ${rule.destinationWildcard}` : ""}`,
-    rule.sourcePort ? `source-port eq ${rule.sourcePort}` : "",
-    rule.destinationPort ? `destination-port eq ${rule.destinationPort}` : "",
+    portText(rule.sourcePort, "source-port"),
+    portText(rule.destinationPort, "destination-port"),
     rule.icmpType ? `icmp-type ${rule.icmpType}` : ""
   ].filter(Boolean).join(" ");
   return withStats ? `${text} (matches ${Number(rule.matches) || 0})` : text;
@@ -1856,7 +1901,8 @@ function applyAclCliCommand(node, view, cmd, lower) {
   if (view.mode === "acl" && lower.startsWith("undo rule")) {
     const acl = getAcl(node, view.acl || "3000");
     const seq = Number(lower.split(/\s+/)[2]);
-    acl.rules = Number.isFinite(seq) ? acl.rules.filter((rule) => rule.seq !== seq) : [];
+    if (!Number.isFinite(seq)) return { handled: true, error: "Error: ACL rule number is required." };
+    acl.rules = acl.rules.filter((rule) => rule.seq !== seq);
     node.aclRules = acl.rules.map(formatAclRule);
     return { handled: true };
   }
@@ -1970,9 +2016,9 @@ function applyUndoConfigCommand(node, context, cmd, lower) {
     node.protocols.Static = Boolean(node.routes.length);
     return true;
   }
-  if (/^undo\s+vlan\s+\d+/.test(lower)) {
-    const vlan = cmd.split(/\s+/).pop();
-    node.vlans = (node.vlans || []).filter((item) => item !== vlan);
+  if (/^undo\s+vlan\s+(batch\s+)?\d+/.test(lower)) {
+    const removed = new Set(parseVlanList(cmd.replace(/^undo\s+vlan\s+(batch\s+)?/i, "")));
+    node.vlans = (node.vlans || []).filter((item) => !removed.has(String(item)));
     return true;
   }
   if (context.mode !== "interface" || !iface) return false;
@@ -2644,12 +2690,23 @@ function aclProtocolMatches(rule, flow = {}) {
 
 function aclPortMatches(rulePort, flowPort) {
   if (!rulePort) return true;
-  return normalizeAclPort(rulePort) === normalizeAclPort(flowPort || "");
+  const fp = normalizeAclPort(flowPort || "");
+  if (rulePort && typeof rulePort === "object") {
+    if (rulePort.op === "range") { const lo = Number(rulePort.lo), hi = Number(rulePort.hi), v = Number(fp); return v >= lo && v <= hi; }
+    if (rulePort.op === "gt") return Number(fp) > Number(rulePort.port);
+    if (rulePort.op === "lt") return Number(fp) < Number(rulePort.port);
+    return false;
+  }
+  return normalizeAclPort(rulePort) === fp;
 }
 
 function aclIcmpTypeMatches(rule, flow = {}) {
   if (!rule.icmpType) return true;
-  return String(rule.icmpType).toLowerCase() === String(flow.icmpType || "").toLowerCase();
+  const map = { "8": "echo", "0": "echo-reply", "3": "unreachable", "11": "time-exceeded", "13": "timestamp-request", "14": "timestamp-reply" };
+  const norm = (v) => String(v || "").toLowerCase();
+  const ruleType = map[norm(rule.icmpType)] || norm(rule.icmpType);
+  const flowType = map[norm(flow.icmpType)] || norm(flow.icmpType);
+  return ruleType === flowType;
 }
 
 function ipMatchesWildcard(ip, ruleIp, wildcard = "") {
@@ -2879,7 +2936,7 @@ function bulkInspector() {
       <button id="bulkClear">取消选择</button>
     </div>
     <div class="port-list">
-      ${nodes.map((node) => `<div class="port-row"><strong>${escapeHtml(node.name)}</strong><span>${escapeHtml(node.model)} · ${node.running ? "Running" : "Stopped"}</span><button data-bulk-focus="${node.id}">定位</button></div>`).join("")}
+      ${nodes.map((node) => `<div class="port-row"><strong>${escapeHtml(node.name)}</strong><span>${escapeHtml(node.model)} · ${node.running ? "Running" : "Stopped"}</span><button data-bulk-focus="${escapeHtml(node.id)}">定位</button></div>`).join("")}
       ${annotations.map((note) => `<div class="port-row"><strong>${escapeHtml(note.text)}</strong><span>文本标注</span><button data-bulk-focus-text="${note.id}">定位</button></div>`).join("")}
     </div>`;
 }
@@ -2916,9 +2973,15 @@ function bulkPower(running) {
   renderAll();
 }
 
-function bulkDelete() {
+async function bulkDelete() {
   const ids = new Set(state.multiSelected);
   const noteIds = new Set(state.multiAnnotations);
+  const items = [...ids, ...noteIds];
+  if (!items.length) return;
+  if (window.EnspEnhancements?.confirmBatchDelete) {
+    const ok = await window.EnspEnhancements.confirmBatchDelete(items, "对象");
+    if (!ok) return;
+  }
   ids.forEach(closeNodeWindows);
   state.nodes = state.nodes.filter((node) => !ids.has(node.id));
   state.links = state.links.filter((link) => !ids.has(link.a) && !ids.has(link.b));
@@ -3144,7 +3207,7 @@ function nodeInspector(node) {
 }
 
 function portRow(port, index) {
-  return `<div class="port-row"><strong>${escapeHtml(port.name)}</strong><span>${port.ip || "未配置"} ${port.vlan ? `VLAN ${port.vlan}` : ""}</span><button data-port="${index}">${port.status === "up" ? "Up" : "Down"}</button></div>`;
+  return `<div class="port-row"><strong>${escapeHtml(port.name)}</strong><span>${escapeHtml(port.ip || "未配置")} ${port.vlan ? `VLAN ${escapeHtml(port.vlan)}` : ""}</span><button data-port="${index}">${port.status === "up" ? "Up" : "Down"}</button></div>`;
 }
 
 function bindNodeInspector(node) {
@@ -3197,25 +3260,25 @@ function linkInspector(link) {
   const bPort = b ? findExistingInterface(b, link.bPort) : null;
   return `
     <div class="kv">
-      <div><span>端点 A</span><strong>${a?.name || "?"}:${link.aPort}</strong></div>
-      <div><span>端点 B</span><strong>${b?.name || "?"}:${link.bPort}</strong></div>
-      <div><span>管理状态</span><strong>${link.status}</strong></div>
-      <div><span>物理状态</span><strong class="${diagnostic.physical === "up" ? "state-ok" : "state-bad"}">${diagnostic.physical}</strong></div>
-      <div><span>业务状态</span><strong class="${diagnostic.traffic === "up" ? "state-ok" : "state-warn"}">${diagnostic.traffic}</strong></div>
+      <div><span>端点 A</span><strong>${escapeHtml(a?.name || "?")}:${escapeHtml(link.aPort)}</strong></div>
+      <div><span>端点 B</span><strong>${escapeHtml(b?.name || "?")}:${escapeHtml(link.bPort)}</strong></div>
+      <div><span>管理状态</span><strong>${escapeHtml(link.status)}</strong></div>
+      <div><span>物理状态</span><strong class="${diagnostic.physical === "up" ? "state-ok" : "state-bad"}">${escapeHtml(diagnostic.physical)}</strong></div>
+      <div><span>业务状态</span><strong class="${diagnostic.traffic === "up" ? "state-ok" : "state-warn"}">${escapeHtml(diagnostic.traffic)}</strong></div>
       <div><span>诊断</span><strong>${escapeHtml(diagnostic.reason || "-")}</strong></div>
     </div>
     <div class="field"><label>端口状态</label><div class="port-list">
       ${linkEndpointRow("A", a, aPort)}
       ${linkEndpointRow("B", b, bPort)}
     </div></div>
-    <div class="field"><label>${a?.name || "端点 A"} 网口</label><select id="linkAPort">${a ? portOptions(a, link.aPort) : ""}</select></div>
-    <div class="field"><label>${b?.name || "端点 B"} 网口</label><select id="linkBPort">${b ? portOptions(b, link.bPort) : ""}</select></div>
-    <div class="field"><label>带宽 Mbps</label><input id="linkBandwidth" type="number" min="1" value="${link.bandwidth}" /></div>
+    <div class="field"><label>${escapeHtml(a?.name || "端点 A")} 网口</label><select id="linkAPort">${a ? portOptions(a, link.aPort) : ""}</select></div>
+    <div class="field"><label>${escapeHtml(b?.name || "端点 B")} 网口</label><select id="linkBPort">${b ? portOptions(b, link.bPort) : ""}</select></div>
+    <div class="field"><label>带宽 Mbps</label><input id="linkBandwidth" type="number" min="1" value="${escapeHtml(link.bandwidth)}" /></div>
     <div class="field"><label>线缆类型</label><select id="linkCable">
       ${["Auto", "Copper", "Ethernet", "Fiber", "Serial", "Console"].map((c) => `<option ${link.cable === c ? "selected" : ""}>${c}</option>`).join("")}
     </select></div>
-    <div class="field"><label>时延 ms</label><input id="linkLatency" type="number" min="0" value="${link.latency}" /></div>
-    <div class="field"><label>丢包 %</label><input id="linkLoss" type="number" min="0" max="100" value="${link.loss}" /></div>
+    <div class="field"><label>时延 ms</label><input id="linkLatency" type="number" min="0" value="${escapeHtml(link.latency)}" /></div>
+    <div class="field"><label>丢包 %</label><input id="linkLoss" type="number" min="0" max="100" value="${escapeHtml(link.loss)}" /></div>
     <div class="button-row">
       <button id="toggleLink" class="primary-btn">${link.status === "up" ? "断开链路" : "恢复链路"}</button>
       <button id="deleteLink" class="danger-btn">删除链路</button>
@@ -3411,25 +3474,63 @@ function applyConfig() {
 function parseConfig(node, text) {
   let current = null;
   let currentAcl = null;
+  let ospfMode = false;
+  let ospfArea = "";
+  let poolMode = false;
+  let poolName = "";
   node.routes = [];
   node.acls = {};
+  node.vlans = [];
+  node.ospf = { process: "", routerId: "", areas: [], networks: [] };
+  node.dhcpPools = [];
+  node.dhcpEnabled = false;
+  node.aaaEnabled = false;
+  node.bpduEnabled = false;
+  node.stp = { enabled: false, mode: "", priority: "", root: "" };
+  ["OSPF", "RIP", "ISIS", "BGP", "VLAN", "STP", "NAT", "WLAN", "ACL", "Static"].forEach((p) => { node.protocols[p] = false; });
+  (node.interfaces || []).forEach((p) => {
+    p.ip = "";
+    p.mask = "";
+    p.vlan = "";
+    p.linkType = "access";
+    p.trunkAllow = [];
+    p.dot1q = "";
+    p.ospf = null;
+    p.dhcpSelect = "";
+    p.arpBroadcast = false;
+    p.desc = "";
+    p.status = "up";
+    p.trafficFilters = {};
+    p.stpEdged = false;
+    p.vrrp = null;
+    p.ethTrunk = "";
+    p.linkProtocol = "";
+    p.ppp = [];
+    p.portSecurity = "";
+  });
   text.split(/\r?\n/).map(normalizeConfigLine).forEach((line) => {
     if (!line) return;
     if (line === "#" || /^quit$/i.test(line) || /^return$/i.test(line)) {
       current = null;
       currentAcl = null;
+      ospfMode = false;
+      poolMode = false;
       return;
     }
-    if (applyUndoConfigCommand(node, { mode: current ? "interface" : "", iface: current?.name || "" }, line, line.toLowerCase())) return;
+    if (applyUndoConfigCommand(node, { mode: current ? "interface" : (ospfMode ? "ospf" : (poolMode ? "ip-pool" : "")), iface: current?.name || "" }, line, line.toLowerCase())) return;
     if (line.startsWith("sysname ")) node.name = line.slice(8).trim();
     if (line.startsWith("interface ")) {
       current = findInterfaceByName(node, line.slice(10).trim());
       currentAcl = null;
+      ospfMode = false;
+      poolMode = false;
     }
     if (/^acl(\s+number)?\s+/i.test(line)) {
       const aclId = parseAclNumber(line);
       currentAcl = aclId ? getAcl(node, aclId) : null;
       current = null;
+      ospfMode = false;
+      poolMode = false;
     }
     if (line.startsWith("user-interface ")) getUserInterface(node, line.slice(15).trim());
     if (current && line.startsWith("ip address ")) {
@@ -3438,7 +3539,10 @@ function parseConfig(node, text) {
       current.mask = mask || "";
     }
     if (current && line.startsWith("port default vlan ")) current.vlan = line.split(/\s+/).pop();
-    if (current && line.startsWith("port link-type ")) current.linkType = line.split(/\s+/).pop();
+    if (current && line.startsWith("port link-type ")) {
+      current.linkType = line.split(/\s+/).pop();
+      if (current.linkType === "trunk" && (!current.trunkAllow || !current.trunkAllow.length)) current.trunkAllow = ["1"];
+    }
     if (current && line.startsWith("port trunk allow-pass vlan ")) current.trunkAllow = parseVlanList(line.replace(/^port\s+trunk\s+allow-pass\s+vlan\s+/i, ""));
     if (current && line.startsWith("dot1q termination vid ")) current.dot1q = line.split(/\s+/).pop();
     if (current && line === "arp broadcast enable") current.arpBroadcast = true;
@@ -3470,14 +3574,40 @@ function parseConfig(node, text) {
     }
     if (current && line === "shutdown") current.status = "down";
     if (current && line === "undo shutdown") current.status = "up";
-    if (line.startsWith("ospf")) node.protocols.OSPF = true;
+    // 只匹配全局视图的 "ospf [进程号] [router-id x]"，不要误吞接口下的 "ospf enable/cost ..."
+    if (!current && /^ospf(\s+\d+)?(\s+router-id\s+\S+)?$/i.test(line)) {
+      node.protocols.OSPF = true;
+      ospfArea = "";
+      poolMode = false;
+      const parts = line.split(/\s+/);
+      if (parts[1] && /^[0-9]+$/.test(parts[1])) node.ospf.process = parts[1];
+      const routerIdIndex = parts.findIndex((p) => p.toLowerCase() === "router-id");
+      if (routerIdIndex >= 0) node.ospf.routerId = parts[routerIdIndex + 1] || "";
+      current = null;
+      currentAcl = null;
+      ospfMode = true;
+    }
+    if (ospfMode && /^area\s+/.test(line)) {
+      ospfArea = line.split(/\s+/)[1] || "0";
+      if (!node.ospf.areas.includes(ospfArea)) node.ospf.areas.push(ospfArea);
+    }
+    if (ospfMode && /^network\s+/.test(line)) {
+      const [, network, wildcard] = line.split(/\s+/);
+      node.ospf.networks.push({ network, wildcard, area: ospfArea || "0" });
+    }
     if (line.startsWith("rip")) node.protocols.RIP = true;
     if (line.startsWith("vlan")) {
       node.protocols.VLAN = true;
       const vlan = line.match(/^vlan\s+(\d+)/)?.[1];
       if (vlan && !node.vlans.includes(vlan)) node.vlans.push(vlan);
     }
-    if (line.startsWith("stp")) node.protocols.STP = true;
+    if (line.startsWith("stp")) {
+      node.protocols.STP = true;
+      if (line === "stp enable") node.stp.enabled = true;
+      if (line.startsWith("stp mode ")) node.stp.mode = line.split(/\s+/).pop();
+      if (line.startsWith("stp priority ")) node.stp.priority = line.split(/\s+/).pop();
+      if (line.startsWith("stp root ")) node.stp.root = line.split(/\s+/).pop();
+    }
     if (line === "bpdu enable") {
       node.bpduEnabled = true;
       node.protocols.STP = true;
@@ -3485,6 +3615,22 @@ function parseConfig(node, text) {
     if (line.startsWith("nat")) node.protocols.NAT = true;
     if (line.startsWith("wlan")) node.protocols.WLAN = true;
     if (line === "dhcp enable") node.dhcpEnabled = true;
+    if (line.startsWith("ip pool ")) {
+      poolName = line.slice(8).trim();
+      getDhcpPool(node, poolName);
+      poolMode = true;
+      current = null;
+      currentAcl = null;
+      ospfMode = false;
+    }
+    if (poolMode && line.startsWith("network ")) {
+      const parts = line.split(/\s+/);
+      const pool = getDhcpPool(node, poolName);
+      pool.network = parts[1] || "";
+      pool.mask = parts[3] || parts[2] || "";
+    }
+    if (poolMode && line.startsWith("gateway-list ")) getDhcpPool(node, poolName).gateway = line.slice(13).trim();
+    if (poolMode && line.startsWith("dns-list ")) getDhcpPool(node, poolName).dns = line.slice(9).trim();
     if (line.startsWith("local-user ")) {
       node.aaaEnabled = true;
       applyLocalUserCommand(node, line);
@@ -3779,7 +3925,9 @@ function configureCommand(cmd, lower, node) {
     node.interfaces.find((i) => i.name === state.cliInterface).vlan = cmd.split(/\s+/).pop();
     node.protocols.VLAN = true;
   } else if (state.cliMode === "interface" && lower.startsWith("port link-type ")) {
-    node.interfaces.find((i) => i.name === state.cliInterface).linkType = cmd.split(/\s+/).pop();
+    const ltIface2 = node.interfaces.find((i) => i.name === state.cliInterface);
+    ltIface2.linkType = cmd.split(/\s+/).pop();
+    if (ltIface2.linkType === "trunk" && (!ltIface2.trunkAllow || !ltIface2.trunkAllow.length)) ltIface2.trunkAllow = ["1"];
   } else if (state.cliMode === "interface" && lower.startsWith("port trunk allow-pass vlan ")) {
     const iface = findInterfaceByName(node, state.cliInterface);
     iface.linkType = "trunk";
@@ -4101,7 +4249,7 @@ function interfaceAllowedVlans(iface, node = null) {
   const linkType = String(iface.linkType || "access").toLowerCase();
   if (linkType === "trunk") {
     const allow = iface.trunkAllow || [];
-    return allow.length ? new Set(allow.map((item) => String(item).toLowerCase() === "all" ? "*" : String(item))) : new Set(["*"]);
+    return allow.length ? new Set(allow.map((item) => String(item).toLowerCase() === "all" ? "*" : String(item))) : new Set(["1"]);
   }
   return new Set([String(iface.vlan || "1")]);
 }
@@ -4460,7 +4608,7 @@ function bindHealthActions() {
 }
 
 function ipAddressRow({ node, iface }) {
-  return `<div class="ip-item" data-ip-node="${node.id}">
+  return `<div class="ip-item" data-ip-node="${escapeHtml(node.id)}">
     <strong><span>${escapeHtml(node.name)}</span><span>${escapeHtml(iface.ip)}</span></strong>
     <span>${escapeHtml(iface.name)} · ${escapeHtml(iface.mask || "mask -")} · ${escapeHtml(node.gateway ? `GW ${node.gateway}` : node.model)}</span>
   </div>`;
@@ -4469,7 +4617,7 @@ function ipAddressRow({ node, iface }) {
 function renderPackets() {
   $("packetRows").innerHTML = state.packets.map((p) => {
     const result = `${p.result}${p.delay ? ` ${p.delay}ms` : ""}${p.reason ? ` - ${p.reason}` : ""}`;
-    return `<tr data-packet-id="${p.id}"><td>${p.time}</td><td>${escapeHtml(p.source)}</td><td>${escapeHtml(p.dest)}</td><td>${escapeHtml(p.protocol)}</td><td>${escapeHtml(p.path || "-")}</td><td title="${escapeHtml(p.reason || "")}">${escapeHtml(result)}</td></tr>`;
+    return `<tr data-packet-id="${escapeHtml(p.id)}"><td>${escapeHtml(p.time)}</td><td>${escapeHtml(p.source)}</td><td>${escapeHtml(p.dest)}</td><td>${escapeHtml(p.protocol)}</td><td>${escapeHtml(p.path || "-")}</td><td title="${escapeHtml(p.reason || "")}">${escapeHtml(result)}</td></tr>`;
   }).join("");
   document.querySelectorAll("[data-packet-id]").forEach((row) => {
     row.addEventListener("click", () => replayPacketPath(Number(row.dataset.packetId)));
@@ -4493,7 +4641,7 @@ function packetPathIds(packet) {
 }
 
 function renderEvents() {
-  $("eventLog").innerHTML = state.events.slice(0, 160).map((e) => `<div class="event"><span>${e.time}</span><span class="level-${e.level}">${e.source}</span><span>${escapeHtml(e.message)}</span></div>`).join("");
+  $("eventLog").innerHTML = state.events.slice(0, 160).map((e) => `<div class="event"><span>${escapeHtml(e.time)}</span><span class="level-${escapeHtml(e.level)}">${escapeHtml(e.source)}</span><span>${escapeHtml(e.message)}</span></div>`).join("");
 }
 
 function addTerminal(text, cls = "") {
@@ -4723,7 +4871,8 @@ function restoreOpenWindows() {
   state.pendingOpenWindows.forEach((item) => {
     if (!getNode(item.id)) return;
     item.kind === "endpoint" ? openEndpointWindow(item.id) : openNetworkDeviceWindow(item.id);
-    const selector = item.kind === "endpoint" ? `[data-endpoint-window="${item.id}"]` : `[data-vrp-window="${item.id}"]`;
+    const safeId = CSS.escape(String(item.id));
+    const selector = item.kind === "endpoint" ? `[data-endpoint-window="${safeId}"]` : `[data-vrp-window="${safeId}"]`;
     const win = document.querySelector(selector);
     if (win) {
       win.style.left = `${clamp(Number(item.left) || 160, 0, window.innerWidth - 120)}px`;
@@ -4765,6 +4914,11 @@ function closeNodeWindows(id) {
 function handleGlobalHotkeys(event) {
   const tag = event.target?.tagName?.toLowerCase();
   const editable = tag === "input" || tag === "textarea" || event.target?.isContentEditable;
+  if (!editable && (event.key === "?" || (event.key === "/" && event.shiftKey))) {
+    event.preventDefault();
+    window.EnspEnhancements?.showShortcutsPanel?.();
+    return;
+  }
   if (!editable && (event.key === "Delete" || event.key === "Backspace")) {
     event.preventDefault();
     deleteSelection();
@@ -5013,21 +5167,55 @@ function updateMeters() {
   $("linkMeter").value = link; $("linkText").textContent = `${link}%`;
 }
 
+function isQuotaError(error) {
+  return error && (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED" || error.code === 22 || error.code === 1014);
+}
+
+// 写入历史项目列表；超出 localStorage 配额时从最旧的项目开始淘汰，返回被淘汰的数量
+function writeSavedProjects(projects) {
+  const list = projects.slice(0, MAX_SAVED_PROJECTS);
+  let evicted = projects.length - list.length;
+  while (list.length) {
+    try {
+      localStorage.setItem(PROJECTS_KEY, JSON.stringify(list));
+      return evicted;
+    } catch (error) {
+      if (!isQuotaError(error) || list.length === 1) throw error;
+      list.pop();
+      evicted += 1;
+    }
+  }
+  return evicted;
+}
+
 function saveProject() {
   state.project.name = $("projectNameInput")?.value?.trim() || state.project.name || "Untitled.lab";
   state.project.id = state.project.id || slugId(state.project.name);
   state.project.updatedAt = new Date().toISOString();
   const data = serialize();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  const projects = savedProjects().filter((p) => p.id !== state.project.id);
-  projects.unshift({
-    id: state.project.id,
-    name: state.project.name,
-    createdAt: state.project.createdAt,
-    updatedAt: state.project.updatedAt,
-    data
-  });
-  localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects.slice(0, 24)));
+  const json = JSON.stringify(data);
+  let evicted = 0;
+  try {
+    const projects = savedProjects().filter((p) => p.id !== state.project.id);
+    projects.unshift({
+      id: state.project.id,
+      name: state.project.name,
+      createdAt: state.project.createdAt,
+      updatedAt: state.project.updatedAt,
+      data
+    });
+    // 历史列表比自动保存更占空间，先写历史，失败时淘汰旧项目
+    evicted = writeSavedProjects(projects);
+    localStorage.setItem(STORAGE_KEY, json);
+  } catch (error) {
+    updateProjectTitle("Save failed");
+    toast(isQuotaError(error)
+      ? "保存失败：浏览器存储空间不足。可删除历史项目、减少服务器目录文件，或使用“下载”导出。"
+      : `保存失败：${error?.message || error}`);
+    log("bad", "SAVE", `Project save failed: ${error?.message || error}`);
+    return;
+  }
+  if (evicted > 0) toast(`存储空间不足，已移除 ${evicted} 个最旧的历史项目。`);
   updateProjectTitle("Saved");
   toast("项目已持久化保存。");
   log("ok", "SAVE", `Project saved: ${state.project.name}`);
@@ -5057,11 +5245,19 @@ function scheduleAutosave(immediate = false) {
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     try {
+      // 内容未变化时跳过写入：先比对不含时间戳的序列化结果，避免每次渲染都重写整份 localStorage
+      const previousUpdatedAt = state.project.updatedAt;
+      state.project.updatedAt = "";
+      const probe = JSON.stringify(serialize());
+      state.project.updatedAt = previousUpdatedAt;
+      if (probe === lastAutosaveProbe) return;
       state.project.updatedAt = new Date().toISOString();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(serialize()));
+      const json = JSON.stringify(serialize());
+      localStorage.setItem(STORAGE_KEY, json);
+      lastAutosaveProbe = probe;
       updateProjectTitle("Auto-saved");
-    } catch {
-      updateProjectTitle("Save failed");
+    } catch (error) {
+      updateProjectTitle(isQuotaError(error) ? "Storage full" : "Save failed");
     }
   }, immediate ? 0 : 650);
 }
@@ -5099,6 +5295,20 @@ function updateProjectTitle(status = "") {
   if (badge) {
     badge.textContent = status ? `${status} ${new Date(state.project.updatedAt || Date.now()).toLocaleTimeString()}` : "Auto-Save";
   }
+}
+
+function setupIpBadge() {
+  const badge = $("currentIpBadge");
+  if (!badge) return;
+  badge.textContent = "IP ADDRESS: 点击检测（会请求外部服务）";
+  badge.title = "点击后才会向第三方 IP 检测 API 发起请求，默认不发送";
+  badge.style.cursor = "pointer";
+  badge.addEventListener("click", () => {
+    if (badge.dataset.loading === "1") return;
+    badge.dataset.loading = "1";
+    badge.textContent = "IP ADDRESS: Detecting...";
+    loadClientIp().finally(() => { delete badge.dataset.loading; });
+  });
 }
 
 async function loadClientIp() {
@@ -5311,11 +5521,12 @@ function ensPInterfaceDisplayName(node, portName) {
   if (isEndpointNode(node)) return "Ethernet";
   const text = String(portName || "");
   if (/^10GE/i.test(text)) return "10GE";
-  if (/^GE|GigabitEthernet/i.test(text)) return "GE";
+  if (/^(GE|GigabitEthernet)/i.test(text)) return "GE";
   if (/^Serial/i.test(text)) return "Serial";
-  if (/^Eth|Ethernet/i.test(text)) return "Ethernet";
-  if (/^WLAN|Wlan/i.test(text)) return "WLAN";
-  return text.replace(/[0-9/.-]+$/g, "") || "GE";
+  if (/^(Eth|Ethernet)/i.test(text)) return "Ethernet";
+  if (/^(WLAN|Wlan)/i.test(text)) return "WLAN";
+  const stripped = text.replace(/[0-9/.\-]+$/g, "");
+  return stripped || "GE";
 }
 
 function nodeAnchorPoint(node, other) {
@@ -5972,7 +6183,7 @@ function applyImportedTopology(imported, fileName) {
   });
   if (Array.isArray(imported.annotations)) {
     state.annotations = imported.annotations.map((note, index) => ({
-      id: note.id || `t${index + 1}`,
+      id: SAFE_ID_PATTERN.test(String(note.id ?? "")) ? String(note.id) : `t${index + 1}`,
       text: String(note.text || "文本标注"),
       x: clamp(Number(note.x) || 80, 0, state.stage.width - 40),
       y: clamp(Number(note.y) || 80, 0, state.stage.height - 24)
@@ -6000,21 +6211,48 @@ function serialize() {
 }
 
 function hydrate(data) {
-  state.project = data.project || {
-    id: "enterprise-campus",
-    name: "EnterpriseCampus.lab",
-    createdAt: new Date().toISOString(),
-    updatedAt: ""
+  if (!data || typeof data !== "object") throw new Error("项目数据无效");
+  const project = data.project && typeof data.project === "object" ? data.project : {};
+  state.project = {
+    ...project,
+    id: String(project.id || "enterprise-campus"),
+    name: String(project.name || "EnterpriseCampus.lab"),
+    createdAt: String(project.createdAt || new Date().toISOString()),
+    updatedAt: String(project.updatedAt || "")
   };
-  state.nodes = (data.nodes || []).map(migrateSavedNode);
+  const idMap = new Map();
+  const usedIds = new Set();
+  state.nodes = (Array.isArray(data.nodes) ? data.nodes : []).filter((node) => node && typeof node === "object").map((node, index) => {
+    const original = String(node.id ?? "");
+    let id = SAFE_ID_PATTERN.test(original) ? original : `n${index + 1}`;
+    while (usedIds.has(id)) id = `${id}_${index + 1}`;
+    usedIds.add(id);
+    idMap.set(original, id);
+    node.id = id;
+    return migrateSavedNode(node);
+  });
   state.stage = normalizeStageSize(data.stage);
-  state.links = (data.links || []).map(serializeLink);
+  state.links = (Array.isArray(data.links) ? data.links : []).filter((link) => link && typeof link === "object").map((link, index) => sanitizeLink(serializeLink(link), index, idMap));
   rebuildLinkIndex();
-  state.annotations = data.annotations || [];
-  state.packets = data.packets || [];
-  state.events = data.events || [];
-  state.counters = { node: state.nodes.length + 1, link: state.links.length + 1, packet: state.packets.length + 1, text: (state.annotations?.length || 0) + 1, ...(data.counters || {}) };
-  state.seconds = data.seconds || 0;
+  state.annotations = (Array.isArray(data.annotations) ? data.annotations : [])
+    .filter((note) => note && typeof note === "object")
+    .map((note, index) => ({
+      ...note,
+      id: SAFE_ID_PATTERN.test(String(note.id ?? "")) ? String(note.id) : `t${index + 1}`,
+      text: String(note.text ?? ""),
+      x: finiteNumber(note.x, 80),
+      y: finiteNumber(note.y, 80)
+    }));
+  state.packets = Array.isArray(data.packets) ? data.packets.filter((p) => p && typeof p === "object").map((p, index) => ({ ...p, id: Number.isFinite(Number(p.id)) ? Number(p.id) : index + 1 })) : [];
+  state.events = Array.isArray(data.events) ? data.events.filter((e) => e && typeof e === "object") : [];
+  const savedCounters = data.counters || {};
+  state.counters = {
+    node: Math.max(state.nodes.length + 1, finiteNumber(savedCounters.node, 0)),
+    link: Math.max(state.links.length + 1, finiteNumber(savedCounters.link, 0)),
+    packet: Math.max(state.packets.length + 1, finiteNumber(savedCounters.packet, 0)),
+    text: Math.max(state.annotations.length + 1, finiteNumber(savedCounters.text, 0))
+  };
+  state.seconds = finiteNumber(data.seconds, 0);
   state.selected = null;
   state.multiSelected = [];
   state.multiAnnotations = [];
@@ -6031,6 +6269,43 @@ function migrateSavedNode(node) {
     node.model = "Client";
     node.protocols = { ...(node.protocols || {}), "HTTP Client": false };
   }
+  node.name = String(node.name ?? node.id);
+  node.model = String(node.model ?? "");
+  node.x = finiteNumber(node.x, 80);
+  node.y = finiteNumber(node.y, 80);
+  node.interfaces = Array.isArray(node.interfaces) ? node.interfaces.filter((p) => p && typeof p === "object") : [];
+  node.protocols = node.protocols || {};
+  node.routes = node.routes || [];
+  node.vlans = node.vlans || [];
+  node.ospf = node.ospf || { process: "", routerId: "", areas: [], networks: [] };
+  node.ospf.areas = node.ospf.areas || [];
+  node.ospf.networks = node.ospf.networks || [];
+  node.ospf.process = node.ospf.process || "";
+  node.ospf.routerId = node.ospf.routerId || "";
+  node.dhcpPools = node.dhcpPools || [];
+  node.dhcpEnabled = node.dhcpEnabled || false;
+  node.aaaEnabled = node.aaaEnabled || false;
+  node.users = node.users || [];
+  node.userInterfaces = node.userInterfaces || [];
+  node.bpduEnabled = node.bpduEnabled || false;
+  node.stp = node.stp || { enabled: false, mode: "", priority: "", root: "" };
+  node.securityZones = node.securityZones || (node.type === "firewall" ? ["trust", "untrust", "dmz"] : []);
+  node.trunkPorts = node.trunkPorts || [];
+  node.modeCommand = node.modeCommand || "";
+  (node.interfaces || []).forEach((p) => {
+    p.ip = p.ip || "";
+    p.mask = p.mask || "";
+    p.vlan = p.vlan || "";
+    p.linkType = p.linkType || "access";
+    p.trunkAllow = p.trunkAllow || [];
+    p.dot1q = p.dot1q || "";
+    p.ospf = p.ospf || null;
+    p.dhcpSelect = p.dhcpSelect || "";
+    p.arpBroadcast = !!p.arpBroadcast;
+    p.desc = p.desc || "";
+    p.status = p.status || "up";
+    p.trafficFilters = p.trafficFilters || {};
+  });
   ensureAclStore(node);
   if (node.type === "server") ensureServerServices(node);
   return node;
@@ -6039,6 +6314,29 @@ function migrateSavedNode(node) {
 function serializeLink(link) {
   const { flash, ...stable } = link;
   return stable;
+}
+
+function finiteNumber(value, fallback) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+// 导入/加载的数据来自不可信来源：统一规范 ID 与数值字段，防止注入到 HTML 属性中
+function sanitizeLink(link, index, idMap) {
+  const id = String(link.id ?? "");
+  return {
+    ...link,
+    id: SAFE_ID_PATTERN.test(id) ? id : `l${index + 1}`,
+    a: idMap.get(String(link.a ?? "")) ?? String(link.a ?? ""),
+    b: idMap.get(String(link.b ?? "")) ?? String(link.b ?? ""),
+    aPort: String(link.aPort ?? ""),
+    bPort: String(link.bPort ?? ""),
+    status: link.status === "down" ? "down" : "up",
+    cable: String(link.cable || "Auto"),
+    bandwidth: Math.max(1, finiteNumber(link.bandwidth, 1000)),
+    latency: Math.max(0, finiteNumber(link.latency, 1)),
+    loss: clamp(finiteNumber(link.loss, 0), 0, 100)
+  };
 }
 
 function copyConfig() {

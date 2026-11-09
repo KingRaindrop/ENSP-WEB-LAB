@@ -1,5 +1,84 @@
 # 更新日志
 
+## [v1.1.0] - 2026-11-09
+
+本次为**安全加固 + 云端版落地**版本。核心逻辑缺陷集中修复，新增 Cloudflare Worker 云端部署形态，
+并首次把增强包（Toast / 对话框 / 快捷键面板 / 命令补全）正式接入主程序。
+
+### 🔒 安全
+
+- **修复多处 HTML 注入（XSS）**
+  - `app.js`：链路属性面板（端点名、端口、管理/物理/业务状态、带宽、时延、丢包）、链路右键菜单（链路 ID、状态）、
+    端口行（IP、VLAN）、批量操作列表与 IP 面板的 `data-*` 属性，统一经 `escapeHtml` 输出。
+  - `app-improvements.js`：新增本地 `escHtml()`（该文件先于 `app.js` 加载，不能依赖全局 `escapeHtml`），
+    Toast、确认对话框、Loading、进度条文案全部转义。
+- **导入数据统一净化**：`hydrate()` 对来自本地存档、JSON 导入、云端项目的节点/链路/标注做白名单校验——
+  ID 仅允许 `[A-Za-z0-9_-]`（不合法则重新编号并同步修正链路引用）、数值字段强制转数字、结构非法直接报错，
+  避免注入到元素 ID / CSS 选择器 / HTML 属性中。
+- **CSP**：本地版 `index.html` 增加与云端版一致的 `Content-Security-Policy`；
+  Worker 对静态资源统一下发 `CSP`（含 `frame-ancestors 'none'`）、`X-Content-Type-Options`、
+  `Referrer-Policy`、`X-Frame-Options`、`Permissions-Policy`。
+- **云端令牌处理**：令牌错误只重试一次并清除旧值（原实现会无限弹窗）；前端生成的项目 ID 对齐 Worker 的
+  `ID_PATTERN` 校验规则。
+
+### 🐛 逻辑缺陷修复
+
+| 编号 | 问题 | 修复 |
+|---|---|---|
+| H1 | 未配置 `allow-pass` 的 trunk 被当作放行所有 VLAN，导致 VLAN 间串通 | `port link-type trunk` 时默认 `trunkAllow = ["1"]`，兜底值由 `"*"` 改为 `"1"` |
+| H2 | `parseConfig` 缺失全局 `ospf` / `ip pool` 解析，导入后丢 OSPF 与 DHCP 池 | 增加 OSPF 进程、`router-id`、`area`、`network` 与 DHCP 池状态机解析 |
+| H3 | `parseConfig` 只增不删，删除配置行后旧值残留 | 入口全量重置接口属性（含 `stpEdged`/`vrrp`/`ethTrunk`/`linkProtocol`/`ppp`/`portSecurity`）、VLAN、OSPF、DHCP、协议标志 |
+| 新增 | 接口下的 `ospf enable` 被误判为全局 OSPF 视图，打断后续接口配置解析 | 仅在非接口视图且整行匹配 `ospf [进程号] [router-id x]` 时进入 OSPF 视图 |
+| M1 | ACL 端口 `range`/`gt`/`lt` 不支持，规则静默失效 | `parseAclPort` 支持区间与比较语义，`formatAclRule` 可还原 |
+| M2 | `undo rule` 不带序号会清空整条 ACL | 缺少序号时返回错误提示，不再清空 |
+| M3 | `icmp-type 8/0` 数字写法永不命中 | 建立数字↔名称映射（`8↔echo`、`0↔echo-reply` 等） |
+| M4 | `migrateSavedNode` 迁移不完整，加载旧存档崩溃 | 补齐 `ospf`/`stp`/`dhcpPools`/`securityZones`/`users` 等默认结构 |
+| M5 | 加载存档后计数器被旧值覆盖，新设备可能撞号 | 取实际数量与存档值的较大者 |
+| M6 | `ensPInterfaceDisplayName` 正则优先级错误，兜底产生非法接口名 | 修正正则并约束兜底返回值 |
+| L2 | `normalizeAclPort` 端口别名不全 | 补充 telnet/ssh/smtp/tftp/snmp/ntp 等常用别名 |
+| L4 | `undo vlan batch 10 to 20` 只删掉末尾 VLAN | 复用 `parseVlanList` 删除整个范围 |
+| L9 | `saveProject` 未处理 localStorage 配额溢出 | 捕获配额异常，自动淘汰最旧历史项目并提示 |
+| 新增 | 云端 `☁` 按钮用过一次后一直禁用 | `setBusy` 改为切换 class，不再修改元素 id |
+
+### ✨ 新增
+
+- **Cloudflare Worker 云端版 `cf_ver/`**
+  - `src/worker.js`：`/api/projects*` 走 KV，其余走静态资源；Bearer 令牌鉴权 fail-closed（未配置 `ADMIN_TOKEN` 返回 503）。
+  - `public/cf-sync.js`：右下角 `☁` 面板，支持云端保存 / 列表 / 加载 / 删除，纯增量、不影响 localStore 逻辑。
+  - KV 列表自动翻页（超过 1000 个不再截断）；请求体按真实字节数校验。
+- **前后端文件同步脚本** `cf_ver/scripts/sync-public.mjs`，并接入 `predev` / `predeploy`，
+  避免根目录与 `public/` 两份代码漂移。
+- **增强包正式接入**：`app-improvements.js`（Toast / 确认对话框 / Loading / 快捷键面板 / 批量删除确认）、
+  `command-autocomplete.js`（VRP 命令补全）已挂到主界面与 VRP 窗口输入框，`?` 键打开快捷键帮助。
+
+### ⚡ 优化
+
+- **自动保存**：内容无变化时跳过写入（比对时忽略时间戳），避免每次渲染都重写整份 localStorage。
+- **公网 IP 检测改为点击触发**：默认不向第三方 API 发送任何请求，点击顶栏徽章后才发起，并在 UI 上注明。
+- 舞台缩放/面板等 UI 状态持久化保持一致，新增样式集中在 `styles-improvements.css`。
+
+### 📝 已知遗留（未在本版处理）
+
+- 出口 TCP 流量未建模源端口，`source-port eq <临时端口>` 类规则不会命中（仿真简化）。
+- 邻接表缓存仅按引用+长度判断新鲜度。
+- 纯配置文本（无 VRP 提示符）不会被识别为 transcript bundle。
+- 扁平 ZIP（未按 `工程名/GUID/` 组织）导入时取不到设备 GUID。
+- `serialize()` 返回实时 `state` 引用；导出 `vrpcfg.cfg` 使用 UTF-8 而非 GBK。
+
+### 📦 修改的文件
+
+见 [RELEASE-v1.1.0.md](./RELEASE-v1.1.0.md) 的「发行文件清单」。
+
+### 📊 统计
+
+- `app.js` +369 / -71 行（安全加固、解析修复、配额与自动保存优化）
+- `index.html` +5 / -1，`app-improvements.js` +13 / -7，`command-autocomplete.js` +14 / -6，`styles.css` +1
+- `README.md` +50 / -6，本更新日志 +83 / -4
+- 新增 `cf_ver/`（Worker + KV + 同步面板 + 同步脚本）与 `docs/RELEASE-v1.1.0.md`、`docs/BUG.md`
+- 修复高危 3 项、中危 6 项、低危 4 项，另修复本次迭代引入的 2 个缺陷
+
+---
+
 ## [v1.0.1] - 2026-06-07
 
 ### 🔧 优化
@@ -153,20 +232,22 @@
 
 ## 🔮 未来计划
 
-### 短期（v1.1.0）
+### 短期（v1.2.0）
 - [ ] 暗色主题支持
 - [ ] 拖拽对齐辅助线
 - [ ] 设备批量配置
+- [ ] 服务器目录文件改存 IndexedDB（解除 localStorage 配额压力）
 
-### 中期（v1.2.0）
+### 中期（v1.3.0）
 - [ ] 导出为图片（PNG/SVG）
 - [ ] 实验引导系统
 - [ ] 命令历史搜索（Ctrl+R）
+- [ ] 出口 TCP 流量源端口建模（使 `source-port` 类 ACL 规则生效）
 
 ### 长期（v2.0.0）
-- [ ] 云端同步功能
 - [ ] 多语言支持
 - [ ] 移动端适配
+- [ ] 拓扑渲染改为增量更新（大规模拓扑性能）
 
 ---
 
@@ -182,4 +263,4 @@
 
 ---
 
-*最后更新：2026-06-07*
+*最后更新：2026-11-09*

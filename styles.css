@@ -1152,6 +1152,7 @@ body.panel-resizing {
 }
 
 .cli-form {
+  position: relative;
   display: grid;
   grid-template-columns: auto 1fr;
   align-items: center;
