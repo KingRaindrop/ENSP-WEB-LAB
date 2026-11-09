@@ -20,12 +20,23 @@
 
 ## 🚀 部署
 
+### 一键部署到 Cloudflare
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/KingRaindrop/ENSP-WEB-LAB)
+
+点击按钮后：克隆仓库到你的 GitHub → 自动创建 KV 命名空间 → 部署到你的 Cloudflare 账号，全程无需本地环境。
+
+部署完成后（可选）到 **Cloudflare Dashboard → Workers & Pages → ensp-web-lab → Settings → Variables and Secrets** 添加 `ADMIN_TOKEN`（类型选 **Secret**），云端项目同步即可使用。
+不配置也不影响其它功能，只是 `/api/*` 会返回 503（fail-closed）。
+
+### 其它部署方式
+
 | 方式 | 适用场景 | 文档 |
 |---|---|---|
 | **纯静态托管** | 教学演示、内网部署、GitHub Pages / 任意 CDN | 直接部署仓库根目录（`index.html` + `app.js` + 样式），无后端 |
 | **Cloudflare Worker** | 需要多端共享项目（云端保存 / 加载 / 删除） | `cf_ver/`，静态资源 + KV 存储 + 令牌鉴权 |
 
-**先跑起来（30 秒）：**
+**本地先跑起来（30 秒）：**
 
 ```bash
 git clone https://github.com/KingRaindrop/ENSP-WEB-LAB.git
@@ -35,7 +46,7 @@ python -m http.server 8000     # 或直接双击 index.html
 
 打开 `http://localhost:8000` 即可。
 
-👉 **完整部署文档（含 KV 创建、令牌配置、域名、验证与回滚）：[docs/DEPLOY.md](docs/DEPLOY.md)**
+👉 **完整部署文档（KV 创建、令牌配置、自定义域名、验证与回滚）：[docs/DEPLOY.md](docs/DEPLOY.md)**
 
 ---
 
@@ -127,6 +138,8 @@ python -m http.server 8000     # 或直接双击 index.html
 ├── app-improvements.js           增强包：Toast / 对话框 / Loading / 快捷键面板
 ├── command-autocomplete.js       VRP 命令自动补全
 ├── sample-topology.txt           文本拓扑导入示例
+├── wrangler.jsonc                一键部署（Deploy to Cloudflare）用的配置
+├── .dev.vars.example             密钥模板（真实 .dev.vars 不入库）
 ├── docs/                         文档（索引：docs/README.md）
 │   ├── DEPLOY.md · USAGE.md      部署指南 · 使用手册
 │   ├── CHANGELOG.md · RELEASE-v1.1.0.md · BUG.md
@@ -136,7 +149,7 @@ python -m http.server 8000     # 或直接双击 index.html
     ├── src/worker.js             /api/projects 走 KV，其余走静态资源
     ├── public/                   前端资源（由 sync-public.mjs 同步生成）
     ├── scripts/sync-public.mjs   根目录 → public 的同步脚本
-    └── wrangler.toml.example     配置模板（真实 wrangler.toml 不入库）
+    └── wrangler.toml.example     本地部署配置模板（真实 wrangler.toml 不入库）
 ```
 
 ---

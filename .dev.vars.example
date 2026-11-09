@@ -1,0 +1,11 @@
+# 一键部署 / 本地开发用的密钥模板（dotenv 格式）
+#
+# 复制为 .dev.vars 后填写真实值（.dev.vars 已被 .gitignore 忽略，不会入库）：
+#   cp .dev.vars.example .dev.vars
+#
+# ADMIN_TOKEN：云端项目 API 的 Bearer 令牌。
+#   - 未设置时 /api/* 一律返回 503（fail-closed），静态页面仍可正常访问。
+#   - 生成建议：openssl rand -hex 32
+#   - 部署后可在 Dashboard → Workers → 你的 Worker → Settings → Variables and Secrets
+#     中添加（类型选 Secret），或用 `npx wrangler secret put ADMIN_TOKEN`。
+ADMIN_TOKEN=

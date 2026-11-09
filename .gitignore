@@ -6,6 +6,9 @@ node_modules/
 node_modules/.cache/
 .dev.vars
 .dev.vars.*
+# 模板文件允许入库（不含真实值）
+!.dev.vars.example
+!.env.example
 # 本地部署配置（含域名与 KV 命名空间 ID，仅保留在本地）
 cf_ver/wrangler.toml
 

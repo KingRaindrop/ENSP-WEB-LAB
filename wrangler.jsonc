@@ -1,0 +1,37 @@
+// Cloudflare「一键部署」按钮专用配置（Deploy to Cloudflare）
+//
+// 作用：https://deploy.workers.cloudflare.com/?url=<本仓库>
+//   1. 把仓库克隆到你的 GitHub 账号
+//   2. 按本文件创建/复用 KV 命名空间并绑定为 PROJECTS
+//   3. 执行 `npx wrangler deploy` 部署到你的 Cloudflare 账号
+//
+// ⚠️ 注意：
+//   - 本文件只服务于一键部署，**不要在本仓库根目录手动执行 wrangler deploy**
+//     （仓库所有者的生产环境用的是 cf_ver/wrangler.toml，见 docs/DEPLOY.md）。
+//   - 本文件不含任何密钥、真实域名或真实 KV ID；部署时由 Cloudflare 自动改写。
+//   - ADMIN_TOKEN 通过 Dashboard → Workers → 你的 Worker → Settings → Variables
+//     and Secrets 添加（类型选 Secret），或用 `npx wrangler secret put ADMIN_TOKEN`。
+
+{
+  "name": "ensp-web-lab",
+  "main": "cf_ver/src/worker.js",
+  "compatibility_date": "2026-11-09",
+
+  "assets": {
+    "directory": "./cf_ver/public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+
+  // 云端项目存储；部署时 Cloudflare 会自动创建该 KV 命名空间并回填 id
+  "kv_namespaces": [
+    {
+      "binding": "PROJECTS",
+      "id": "00000000000000000000000000000000"
+    }
+  ],
+
+  "observability": {
+    "enabled": true
+  }
+}

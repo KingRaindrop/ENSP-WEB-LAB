@@ -56,6 +56,26 @@ sample-topology.txt
 
 `cf_ver/` 把同一套前端包装成 Worker：静态资源由 `[assets]` 绑定提供，云端项目通过 KV + `/api/projects` 存取，前端右下角出现 `☁` 面板。
 
+### 2.0 一键部署（推荐，无需本地环境）
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/KingRaindrop/ENSP-WEB-LAB)
+
+点击后 Cloudflare 会：
+
+1. 把仓库克隆到你自己的 GitHub 账号（可改名）；
+2. 读取仓库根目录的 [`wrangler.jsonc`](../wrangler.jsonc)，自动创建 KV 命名空间并绑定为 `PROJECTS`；
+3. 用 Workers Builds 执行 `npx wrangler deploy`，部署到你的账号。
+
+**部署完成后还需要一步**（否则 `/api/*` 返回 503）：
+
+> Cloudflare Dashboard → **Workers & Pages** → 选择刚创建的 Worker → **Settings → Variables and Secrets**
+> → 添加变量 `ADMIN_TOKEN`，类型选 **Secret**，值用 `openssl rand -hex 32` 生成。
+
+也可以在克隆出来的仓库里执行 `npx wrangler secret put ADMIN_TOKEN` 后重新部署。
+
+**说明：** 根目录的 `wrangler.jsonc` 只服务于一键部署，其中的 KV `id` 是占位值，Cloudflare 会在你的账号里创建新命名空间后回填。
+仓库所有者的生产环境用的是 `cf_ver/wrangler.toml`（不入库），**不要在本仓库根目录手动执行 `wrangler deploy`**，否则会覆盖同名 Worker 配置。
+
 ### 2.1 前置条件
 
 - Node.js 18+

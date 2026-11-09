@@ -146,6 +146,10 @@ export default {
         }
         return new Response(null, { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
       }
+      // FAQ-2：KV 未绑定时给出明确提示，而不是 500
+      if (!env.PROJECTS) {
+        return json({ error: "API disabled: KV namespace 'PROJECTS' is not bound. Add the KV binding in Dashboard → Workers → your Worker → Settings → Bindings." }, 503, corsHeaders(request));
+      }
       try {
         return await handleProjects(request, env, projectIdFromPath(url.pathname));
       } catch (err) {
