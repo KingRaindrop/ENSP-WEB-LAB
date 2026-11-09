@@ -38,7 +38,13 @@ http://localhost:8000
 ├── app-improvements.js           增强包：Toast / 确认对话框 / Loading / 快捷键面板
 ├── command-autocomplete.js       VRP 命令自动补全引擎
 ├── sample-topology.txt           文本拓扑导入示例
-├── docs/                         更新日志、发行说明、审查报告与增强包文档
+├── docs/                         文档（索引见 docs/README.md）
+│   ├── README.md                 文档索引
+│   ├── CHANGELOG.md              更新日志
+│   ├── RELEASE-v1.1.0.md         当前版本发行说明
+│   ├── BUG.md                    逻辑审查报告（含修复状态）
+│   ├── enhancements/             增强包实现与集成文档
+│   └── archive/                  v1.0.0 过程性报告归档
 └── cf_ver/                       Cloudflare Worker 云端版（可选）
     ├── src/worker.js             /api/projects 走 KV，其余走静态资源
     ├── public/                   前端资源（由 sync-public.mjs 从根目录同步）

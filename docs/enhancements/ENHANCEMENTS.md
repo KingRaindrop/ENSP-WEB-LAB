@@ -1,3 +1,5 @@
+> ℹ️ **历史文档**：增强包功能已并入主程序并默认启用，本文档作为实现说明保留。索引见 [../README.md](../README.md)。
+
 # eNSP Web Lab - 增强功能包
 
 ## 📚 文档导航
@@ -8,16 +10,16 @@
 
 | 文档 | 说明 | 路径 |
 |------|------|------|
-| 📦 **发行说明** | 当前版本变更与发布清单 | [RELEASE-v1.1.0.md](./RELEASE-v1.1.0.md) |
-| 🗒️ **更新日志** | 全部版本历史 | [CHANGELOG.md](./CHANGELOG.md) |
-| 🐞 **审查报告** | 逻辑审查与修复状态 | [BUG.md](./BUG.md) |
+| 📦 **发行说明** | 当前版本变更与发布清单 | [RELEASE-v1.1.0.md](../RELEASE-v1.1.0.md) |
+| 🗒️ **更新日志** | 全部版本历史 | [CHANGELOG.md](../CHANGELOG.md) |
+| 🐞 **审查报告** | 逻辑审查与修复状态 | [BUG.md](../BUG.md) |
 | 🚀 **快速开始** | 增强包介绍和快速上手 | [README-ENHANCEMENTS.md](./README-ENHANCEMENTS.md) |
 | 🔧 **集成指南** | 详细集成步骤（⭐ 推荐） | [INTEGRATION-GUIDE.md](./INTEGRATION-GUIDE.md) |
 | 📖 **API 文档** | 完整 API 参考和使用说明 | [ENHANCEMENT-DOCS.md](./ENHANCEMENT-DOCS.md) |
-| 📊 **改进总结** | 改进效果和数据对比 | [PROJECT-SUMMARY.md](./PROJECT-SUMMARY.md) |
+| 📊 **改进总结** | 改进效果和数据对比 | [PROJECT-SUMMARY.md](../archive/PROJECT-SUMMARY.md) |
 | 🎯 **快速参考** | API 速查卡片 | [QUICK-REFERENCE.md](./QUICK-REFERENCE.md) |
 | 📋 **改进计划** | 完整改进计划和优先级 | [IMPROVEMENTS.md](./IMPROVEMENTS.md) |
-| ✅ **完成报告** | 最终交付报告 | [COMPLETION-REPORT.md](./COMPLETION-REPORT.md) |
+| ✅ **完成报告** | 最终交付报告 | [COMPLETION-REPORT.md](../archive/COMPLETION-REPORT.md) |
 
 ---
 
