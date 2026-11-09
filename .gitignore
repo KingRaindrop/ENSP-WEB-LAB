@@ -6,6 +6,8 @@ node_modules/
 node_modules/.cache/
 .dev.vars
 .dev.vars.*
+# 本地部署配置（含域名与 KV 命名空间 ID，仅保留在本地）
+cf_ver/wrangler.toml
 
 # 环境变量与密钥
 .env
