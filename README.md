@@ -43,7 +43,7 @@ http://localhost:8000
     ├── src/worker.js             /api/projects 走 KV，其余走静态资源
     ├── public/                   前端资源（由 sync-public.mjs 从根目录同步）
     ├── scripts/sync-public.mjs   根目录 → public 的同步脚本
-    └── wrangler.toml             KV / assets / 域名配置
+    └── wrangler.toml.example     KV / assets / 域名配置模板（实际 wrangler.toml 不入库）
 ```
 
 ## 云端版（可选）

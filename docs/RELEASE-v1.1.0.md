@@ -56,7 +56,7 @@
 | 文件 | 大小 | 说明 |
 |---|---:|---|
 | `.gitignore` | 334 B | 忽略 `node_modules/`、`.wrangler/`、`.dev.vars`、密钥与构建产物 |
-| `cf_ver/wrangler.toml` | 926 B | Worker 配置：KV 绑定、assets、自定义域名、可观测性 |
+| `cf_ver/wrangler.toml.example` | 1.3 KB | 部署配置**模板**（占位符）；实际 `wrangler.toml` 含域名与 KV ID，已被 `.gitignore` 忽略，不入库 |
 | `cf_ver/package.json` | 469 B | 脚本入口（`sync` / `predev` / `dev` / `predeploy` / `deploy` / `tail`） |
 | `cf_ver/package-lock.json` | 52 KB | wrangler 依赖锁定 |
 | `cf_ver/src/worker.js` | 7.0 KB | Worker 入口：`/api/projects*` 走 KV，其余走静态资源 + 安全响应头 |
@@ -131,13 +131,15 @@ git push origin main --follow-tags
 
 ```bash
 cd cf_ver
-npm install          # 首次
-npm run sync         # 同步根目录前端文件到 public/
-npm run deploy       # predeploy 会自动再同步一次
+npm install                          # 首次
+cp wrangler.toml.example wrangler.toml   # 首次：生成本地配置（不入库）
+npm run sync                         # 同步根目录前端文件到 public/
+npm run deploy                       # predeploy 会自动再同步一次
 ```
 
 **注意：** `ADMIN_TOKEN` 需通过 `npx wrangler secret put ADMIN_TOKEN` 设置一次即可（不随代码提交）。
 未设置时 `/api/*` 返回 503（fail-closed），不会开放 KV。
+`wrangler.toml` 含自定义域名与 KV 命名空间 ID，已加入 `.gitignore`，**不要提交**。
 
 ---
 

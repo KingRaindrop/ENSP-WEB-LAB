@@ -1,0 +1,37 @@
+# 复制为 wrangler.toml 后填入自己的值（wrangler.toml 已被 .gitignore 忽略，不会入库）
+#
+#   cp cf_ver/wrangler.toml.example cf_ver/wrangler.toml
+
+name = "ensp-web-lab"
+main = "src/worker.js"
+compatibility_date = "2025-04-01"
+
+# 不使用 *.workers.dev 域名，仅通过自定义域名访问
+workers_dev = false
+
+# 自定义域名（需该 zone 在你自己的 Cloudflare 账号内）
+# routes = [
+#   { pattern = "lab.example.com", custom_domain = true }
+# ]
+
+# 静态资源目录（包含 index.html / app.js / styles 等）
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = true
+
+# 云端项目持久化命名空间
+# 用 `npx wrangler kv namespace create PROJECTS` 创建后填入返回的 id
+[[kv_namespaces]]
+binding = "PROJECTS"
+id = "<你的 KV namespace id>"
+preview_id = "<你的 preview id>"
+
+# 鉴权（fail-closed）：必须设置 ADMIN_TOKEN secret，否则 /api/* 返回 503。
+# 所有 /api/* 调用需携带 Authorization: Bearer <ADMIN_TOKEN>（不支持 URL query 传参）。
+# 设置方式：`npx wrangler secret put ADMIN_TOKEN`
+# 注意：令牌只存在 Cloudflare secret 中，绝对不要写进本文件或提交到仓库。
+
+# 观察日志
+[observability]
+enabled = true

@@ -6,7 +6,8 @@
 
 ```text
 cf_ver/
-  wrangler.toml        # Worker 配置（KV、assets、secret）
+  wrangler.toml.example # 配置模板（复制为 wrangler.toml 后填入自己的值）
+  wrangler.toml        # 本地实际配置（含域名与 KV ID，已被 .gitignore 忽略，不入库）
   package.json         # 脚本入口（sync / predev / dev / predeploy / deploy）
   scripts/
     sync-public.mjs    # 把根目录前端文件同步到 public/（发布前自动执行）
@@ -22,6 +23,9 @@ cf_ver/
     sample-topology.txt
     cf-sync.js         # 云端项目同步面板（保存/加载/列表/删除）
 ```
+
+> `wrangler.toml` **不纳入版本库**（含自定义域名与 KV 命名空间 ID）。
+> 首次部署请执行 `cp wrangler.toml.example wrangler.toml` 再按下方步骤填写。
 
 > `public/` 下的 `app.js`、`app-improvements.js`、`command-autocomplete.js`、`styles*.css`、`sample-topology.txt`
 > 都是根目录文件的副本，每次 `npm run dev` / `npm run deploy` 会先自动同步（`predev` / `predeploy`），
@@ -39,31 +43,36 @@ cf_ver/
    ```bash
    npm install
    ```
-2. 创建 KV 命名空间（线上 + 本地预览）
+2. 生成配置文件（`wrangler.toml` 不入库，需从模板复制）
+   ```bash
+   cp wrangler.toml.example wrangler.toml
+   ```
+3. 创建 KV 命名空间（线上 + 本地预览）
    ```bash
    npx wrangler kv namespace create PROJECTS
    npx wrangler kv namespace create PROJECTS --preview
    ```
-3. 把上一步返回的 `id` 填入 `wrangler.toml`：
+4. 把上一步返回的 `id` 填入 `wrangler.toml`：
    ```toml
    [[kv_namespaces]]
    binding = "PROJECTS"
    id = "<线上 id>"
    preview_id = "<预览 id>"
    ```
-4. **配置鉴权（必须）**：设置 `ADMIN_TOKEN` 后，所有 `/api/*` 调用需带 `Authorization: Bearer <token>`
+   如需自定义域名，取消 `routes` 注释并改成自己的域名。
+5. **配置鉴权（必须）**：设置 `ADMIN_TOKEN` 后，所有 `/api/*` 调用需带 `Authorization: Bearer <token>`
    ```bash
    npx wrangler secret put ADMIN_TOKEN
    ```
    前端首次保存/列出时会弹出输入框，输入后保存在 sessionStorage。
    **安全说明**：未配置 `ADMIN_TOKEN` 时 `/api/*` 一律返回 503（fail-closed），
    拒绝服务而不是开放访问；token 仅接受请求头方式传递，不支持 URL query。
-5. 本地开发
+6. 本地开发
    ```bash
    npm run dev
    ```
    访问 `http://localhost:8787`。
-6. 部署到 Cloudflare
+7. 部署到 Cloudflare
    ```bash
    npm run deploy
    ```
